@@ -12,7 +12,7 @@ This document is the spec developers will use to build an implementation plan. T
 
 ## Problem
 
-Small IT teams spend hours on repetitive joiner and leaver work, and the manual steps are where mistakes happen. A typical new hire touches several consoles: the M365 admin center, Entra ID, Exchange, sometimes on-prem Active Directory Users and Computers, plus whatever spreadsheet tracks who gets what.
+Small IT teams spend hours on repetitive onboarding and offboarding work, and the manual steps are where mistakes happen. A typical new hire touches several consoles: the M365 admin center, Entra ID, Exchange, sometimes on-prem Active Directory Users and Computers, plus whatever spreadsheet tracks who gets what.
 
 - **Inconsistent results.** Two technicians onboarding the same role end up with different groups and licenses.
 - **Security gaps on exit.** A missed step at offboarding leaves sign-ins, mailbox access, or paid licenses active.
@@ -31,7 +31,7 @@ The portal is built for internal IT teams of roughly one to ten people supportin
 | IT technician | Run onboardings and offboardings quickly and correctly without memorizing every step |
 | IT lead or admin | Define the standard role templates, control who can do what, and see a history of every change |
 | Hybrid AD owner | Keep on-prem AD and M365 in step without making each change twice |
-| HR or manager (optional, later) | Submit a new-hire or leaver request for IT to action |
+| HR or manager (optional, later) | Submit an onboarding or offboarding request for IT to action |
 
 ## Core features
 
@@ -52,7 +52,7 @@ Every feature is driven by **role templates**: an admin defines once what a give
 3. It removes group memberships and licenses, and records what was removed so it can be reversed.
 4. Mailbox handling options: convert to shared mailbox, set forwarding or auto-reply, grant the manager access, hide from the address list.
 5. OneDrive handling: grant the manager access for a set period before deletion.
-6. In hybrid mode, it disables the AD account and moves it to a leavers OU.
+6. In hybrid mode, it disables the AD account and moves it to an Offboarding OU.
 
 ### Management features
 
@@ -77,7 +77,7 @@ Every feature is driven by **role templates**: an admin defines once what a give
 Everything above lives behind one web portal with one sign-in; technicians never need the M365 admin center or ADUC for routine work.
 
 - **Sign-in** with the technician's own Microsoft work account (Entra ID single sign-on), so access follows existing MFA and Conditional Access.
-- **Dashboard** showing upcoming starters and leavers, pending approvals, recent failures, and unused licenses.
+- **Dashboard** showing upcoming onboardings and offboardings, pending approvals, recent failures, and unused licenses.
 - **User search** with a single user page: attributes, groups, licenses, MFA methods, CA policies that apply, and change history.
 - **Workflows** for onboarding and offboarding, each with a preview step.
 - **Templates and settings** area for admins: role templates, approval rules, tenant and AD connection settings.
