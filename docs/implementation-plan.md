@@ -361,7 +361,7 @@ Overview:
 | M4 | Directory views and dashboard | User search, user page, groups, licenses views, dashboard |
 | M5 | Cloud management features | Attributes, groups, distribution lists, licenses, MFA and TAP |
 | M6 | Role templates and cloud onboarding | Template editor, new-hire flow, scheduling, welcome pack |
-| M7 | Cloud offboarding | Full leaver flow including shared mailbox, OneDrive handover, reversal |
+| M7 | Cloud offboarding | Full offboarding flow including shared mailbox, OneDrive handover, reversal |
 | M8 | Conditional Access management | Include/exclude edits with safety rails and timed exclusions |
 | M9 | Hybrid AD agent | Agent install and enrollment, AD users/groups/OUs, sync, hybrid on/offboarding |
 | M10 | Operations and hardening | Certificate rotation, audit export and verification, health pages, security review |
@@ -439,6 +439,7 @@ Branding work is spread through the milestones rather than saved for the end: to
   4. Enter tenant ID and client ID; Rollcall validates by acquiring an app-only token and calling `GET /organization` and lists any missing permissions or roles from the manifest.
   5. Sign in as the first admin with Entra (OIDC); that user becomes Admin; setup token is invalidated.
   6. Optional: enable Hybrid AD (links to M9 flow; hidden until M9 ships).
+- Fake OIDC provider (6.3) for tests and local dev.
 - Technician sign-in and session handling per 4.5; role-based authorization policies; "no access" page.
 - Admin › Team page: list portal users who have signed in, plus "invite" by UPN or by picking from the tenant directory (pre-creates the `portal_user` with roles); edit roles; disable access.
 - `install.sh admin-reset <upn>` implemented.
@@ -446,18 +447,16 @@ Branding work is spread through the milestones rather than saved for the end: to
 
 **Acceptance criteria**
 
-1. With FakeGraph and fake OIDC (E2E), a test walks the whole wizard from the setup URL to the dashboard as Admin with no manual steps.
-2. Visiting `/setup` without the token, or after setup completes, returns 404; the setup token from `.env` no longer works after step 5 (asserted in integration test).
-3. The certificate private key never leaves the server: no API response contains it (integration test inspects every wizard response), and the DB column is ciphertext that does not contain the PEM header.
-4. Against a live test tenant **[manual, recorded]**, the generated PowerShell script creates a working app registration, and step 4 reports all permissions and roles present.
-5. Step 4 with a deliberately missing permission (FakeGraph token without `User.ReadWrite.All`) shows that permission by name and which features it affects.
-6. A tenant user without roles who signs in sees the "ask your admin" page and receives 403 from every API except `/api/me`.
-7. A user from a different tenant cannot sign in (token validation test with a foreign `tid`).
-8. Role matrix in 4.5 is covered by an authorization test per endpoint group (generated table test: role × endpoint → expected status).
-9. The app shell and wizard pass axe-core with zero serious/critical issues in light and dark mode, and a visual snapshot test exists for each wizard step and for each component on `/dev/components`.
-10. The built SPA makes no request to any third-party host (Playwright asserts every network request is same-origin); fonts render as Atkinson Hyperlegible (computed style check); the Stylelint token rule passes and fails on a planted `#0078D4`.
-11. The theme switch persists across reloads, System follows `prefers-color-scheme`, and the sidebar collapses to the rail below 1024px and to a drawer below 640px.
-12. Docs: `docs/day-1/03-app-registration.md`, `04-directory-roles.md`, `05-first-admin.md`; `docs/reference/permissions.md` generated from the manifest; CI fails if it is stale.
+1. Visiting `/setup` without the token, or after setup completes, returns 404; the setup token from `.env` no longer works after step 5 (asserted in integration test).
+2. The certificate private key never leaves the server: no API response contains it (integration test inspects every wizard response), and the DB column is ciphertext that does not contain the PEM header.
+3. Against a live test tenant **[manual, recorded]**, the generated PowerShell script creates a working app registration, and step 4 reports all permissions and roles present.
+4. A tenant user without roles who signs in sees the "ask your admin" page and receives 403 from every API except `/api/me`.
+5. A user from a different tenant cannot sign in (token validation test with a foreign `tid`).
+6. Role matrix in 4.5 is covered by an authorization test per endpoint group (generated table test: role × endpoint → expected status).
+7. The app shell and wizard pass axe-core with zero serious/critical issues in light and dark mode, and a visual snapshot test exists for each wizard step and for each component on `/dev/components`.
+8. The built SPA makes no request to any third-party host (Playwright asserts every network request is same-origin); fonts render as Atkinson Hyperlegible (computed style check); the Stylelint token rule passes and fails on a planted `#0078D4`.
+9. The theme switch persists across reloads, System follows `prefers-color-scheme`, and the sidebar collapses to the rail below 1024px and to a drawer below 640px.
+10. Docs: `docs/day-1/03-app-registration.md`, `04-directory-roles.md`, `05-first-admin.md`; `docs/reference/permissions.md` generated from the manifest; CI fails if it is stale.
 
 ---
 
@@ -471,17 +470,18 @@ Branding work is spread through the milestones rather than saved for the end: to
 - Postgres job queue with leasing, visibility timeout, and dead-lettering after max attempts; worker host with graceful shutdown (finishes or releases leases within 30 s on `SIGTERM`).
 - Scheduler: runs whose `scheduled_for` is due are queued; scheduled reversals fire when due.
 - Approval rules (Admin › Approval rules): per action type, required yes/no; defaults ON for offboarding, CA changes, and template-driven onboarding of users with admin roles; OFF otherwise.
-- Approvals inbox (`/approvals`) and the approval banner (4.9) showing the frozen preview, requester, comment box, approve/reject.
+- Approvals inbox (`/approvals`) and the approval banner (4.9) showing the frozen preview, requester, comment box, approve/reject. Rejecting requires a non-empty comment (enforced by the API, not only the UI); the comment is shown to the requester on the run and stored in the audit log. Approving may include an optional comment.
 - Change preview and job/step progress components exactly as specified in 4.9 and brand guide §8.
 - Audit log table with hash chain; `/audit` page with filters (actor, action, target, date range, outcome); technicians see only their own actions.
 - FakeGraph (6.2) foundation; fake Exchange runner interface.
+- Retrofit FakeGraph-backed E2E coverage for the M2 setup wizard (criteria 13 and 14 below), since FakeGraph does not exist until this milestone.
 - First step type: `graph.user.updateAttributes` (title only for now), wired to a "Edit job title" action on a stub user page.
 
 **Acceptance criteria**
 
 1. Editing a user's title shows a preview with before → after; submitting creates a run that succeeds and FakeGraph's call log shows exactly one `PATCH /users/{id}` with only `jobTitle`.
 2. Planning a change that is already true shows it as a no-op and submitting makes zero write calls.
-3. With approval required for the action, a Technician's request waits in `AwaitingApproval`; the same user cannot approve it (403); a different Approver can; rejection ends the run with no Graph writes.
+3. With approval required for the action, a Technician's request waits in `AwaitingApproval`; the same user cannot approve it (403); a different Approver can; rejecting with an empty or whitespace-only comment returns 400 and leaves the run in `AwaitingApproval`; a rejection with a comment ends the run with no Graph writes and shows the comment on the run and in its audit event.
 4. If the target's title changes in Graph between approval and execution, the run stops in `NeedsReview` and makes no writes (drift test).
 5. FakeGraph returning 429 with `Retry-After: 2` twice then 200 results in success after ≥4 s and three attempts; returning 403 fails immediately with a plain-language error and a Retry button; after fixing the fake, Retry succeeds and the run shows the full attempt history.
 6. Killing the worker mid-run (`docker kill`) and restarting it resumes the run without duplicating completed steps.
@@ -491,6 +491,8 @@ Branding work is spread through the milestones rather than saved for the end: to
 10. The change preview renders `+`/`−`/`~` markers in Mono with the right status colors, groups by system then area, shows the summary bar and a count-bearing primary button ("Run 1 change"), and every run/step state uses the icon + word from the 4.9 mapping table. Snapshots on `/dev/components` cover: no-op, add, remove, change, approval required, awaiting approval (approver and requester views), failed with retry, succeeded; all pass axe-core.
 11. The approvals inbox and a pending run's approval banner are fully usable at 320px wide (Playwright mobile viewport).
 12. Docs: `docs/admin/approval-rules.md`, `docs/technician/previews-and-retries.md`, `docs/admin/audit-log.md`.
+13. With FakeGraph and fake OIDC (E2E), a test walks the whole M2 setup wizard from the setup URL to the dashboard as Admin with no manual steps.
+14. Wizard step 4 with a deliberately missing permission (FakeGraph token without `User.ReadWrite.All`) shows that permission by name and which features it affects.
 
 ---
 
@@ -504,7 +506,7 @@ Branding work is spread through the milestones rather than saved for the end: to
 - User page (`/users/:id`): attributes, account status, cloud/synced badge, manager, groups (direct, with type), licenses (direct vs group-based), registered MFA methods (types only, never secrets), CA policies that apply (computed from policy include/exclude users and groups, with "may apply" when roles, apps, or conditions make it uncertain), recent runs, and change history from the audit log.
 - Groups list and group page (members, owners, type, source cloud/AD).
 - Licenses page: SKUs with friendly names, total/consumed/available seats, list of licensed disabled accounts with a bulk "remove licenses" action (implemented in M5).
-- Dashboard: upcoming starters and leavers (from scheduled runs), pending approvals, recent failures, unused licenses (available seats and licenses on disabled accounts), certificate expiry warning, agent status (from M9).
+- Dashboard: upcoming onboardings and offboardings (from scheduled runs), pending approvals, recent failures, unused licenses (available seats and licenses on disabled accounts), certificate expiry warning, agent status (from M9).
 - Short-lived `directory_cache` for list views (TTL 5 minutes, manual refresh button).
 
 **Acceptance criteria**
@@ -554,21 +556,22 @@ Branding work is spread through the milestones rather than saved for the end: to
 
 **Tasks**
 
-- Template schema (JSON Schema, versioned): default attributes (department, title, company, office, usage location), UPN and display-name patterns (for example `{first}.{last}@{domain}` with collision rule `{first}.{last}{n}`), groups (cloud and, later, AD), licenses with disabled plans, MFA setup (TAP or one-time password; TAP lifetime), account type (cloud or hybrid; hybrid hidden until M9), target OU (hybrid), mailbox settings (time zone, language), optional manager notification text.
+- Template schema (JSON Schema, versioned): default attributes (department, title, company, office, usage location), UPN and display-name patterns (for example `{first}.{last}@{domain}` and `{first} {last}`; no collision rule, see below), groups (cloud and, later, AD), licenses with disabled plans, MFA setup (TAP or one-time password; TAP lifetime), account type (cloud or hybrid; hybrid hidden until M9), target OU (hybrid), mailbox settings (time zone, language), optional manager notification text.
 - Template editor (`/admin/templates`): form-based, live validation against the tenant (groups and SKUs exist), version history, archive, duplicate, "preview for a sample user".
-- New-hire form: first name, last name, preferred name, department, title, manager (directory picker), start date, role template, personal email (optional, for welcome pack delivery by the technician), overrides for any template field the template marks as overridable.
+- New-hire form: first name, last name, department, title, manager (directory picker), start date, role template, and overrides for any template field the template marks as overridable.
+- Collisions: if the generated UPN, mail nickname, or display name already exists in Entra ID (or, for hybrid, the `sAMAccountName` or UPN exists in AD), planning stops with the run in `NeedsReview` and the preview flags the conflicting value and the existing object it clashes with. Rollcall never invents an alternative (no numeric suffixes or middle initials); the technician enters a different value by hand, which is re-checked before the run can continue.
 - Onboarding plan: create user (disabled until start date if scheduled with "enable on start date" option), set attributes, set manager, add groups, set usage location, assign licenses, wait for mailbox provisioning, set mailbox regional settings, issue TAP or password on start date.
-- Welcome pack: printable page and PDF with username, temporary credential (TAP or one-time password), first sign-in steps, and MFA setup steps; shown once to the technician; styled per `brand-guide.md`; editable intro text in Settings.
+- Welcome pack: printable page and PDF with username, temporary credential (TAP or one-time password), first sign-in steps, and MFA setup steps; shown once to the technician. Admins customize it in Settings › Welcome pack: editable intro text, an uploaded company logo or header image, or a full letterhead (a PDF or image used as the page background, with margins set for the content area), and a toggle to remove all Rollcall branding so the pack carries only the organization's own. The default, with nothing customized, is styled per `brand-guide.md`.
 - Scheduled onboarding: account created immediately (so mailbox and licenses are ready) but sign-in blocked until the start date, when the TAP is issued and sign-in enabled; or fully scheduled creation, per template setting.
 
 **Acceptance criteria**
 
 1. A template referencing a group or SKU that does not exist fails validation with the item's name; a template is versioned, and runs record the template version used.
 2. Onboarding "Jane Doe" with the "Sales associate" seed template produces a preview listing account creation, every attribute, each group, each license, and the credential step, and on submit FakeGraph ends with exactly the expected user state (snapshot compared).
-3. UPN collision: with `jane.doe@` taken, the preview proposes `jane.doe2@` and flags it.
-4. Scheduling for a future date creates the account blocked, and on the date (time-travel test with injectable clock) enables sign-in and issues the TAP; the dashboard lists the upcoming starter until then.
+3. Collisions: with `jane.doe@` taken, or the display name "Jane Doe" already in use, the preview flags the conflict and names the existing user, the run cannot be submitted, and no alternative value is proposed; after the technician enters a unique value by hand the plan re-checks it and continues. Tested for UPN, mail nickname, and display name.
+4. Scheduling for a future date creates the account blocked, and on the date (time-travel test with injectable clock) enables sign-in and issues the TAP; the dashboard lists the upcoming onboarding until then.
 5. Failure injected at "assign licenses" leaves the user created with groups, shows the failed step with Retry, and after Retry the end state equals the no-failure snapshot (no duplicate user, no duplicate memberships).
-6. The welcome pack PDF renders with the brand's fonts and logo, contains the credential only on first view, and a second view shows "credential already shown; issue a new one".
+6. The welcome pack PDF renders with Rollcall branding by default; with a custom header image or letterhead uploaded and Rollcall branding turned off, it contains the organization's header or letterhead and no Rollcall logo, name, or footer (text and image assertions on the PDF). It contains the credential only on first view, and a second view shows "credential already shown; issue a new one".
 7. E2E: Technician completes the form-to-success flow in ≤ 10 interactions (counted in the Playwright test) on the seed template.
 8. Against a live test tenant **[manual, recorded]**: a full onboarding results in a usable account that can sign in with the TAP and has a mailbox.
 9. Docs: `docs/admin/role-templates.md`, `docs/technician/onboarding.md`, `docs/day-1/07-first-template.md`.
@@ -577,7 +580,7 @@ Branding work is spread through the milestones rather than saved for the end: to
 
 ### M7: Cloud offboarding
 
-**Goal:** a leaver is fully and safely offboarded, everything removed is recorded, and the offboarding can be reversed.
+**Goal:** an offboarding is fully and safely completed, everything removed is recorded, and can be reversed.
 
 **Tasks**
 
@@ -604,7 +607,7 @@ Branding work is spread through the milestones rather than saved for the end: to
 2. With FakeGraph/fake Exchange, an immediate offboarding ends with: account disabled, sessions revoked, no MFA methods, mailbox shared, forwarding and auto-reply set as chosen, manager has Full Access, hidden from GAL, no group memberships, no licenses; every removed item is in `undo_data`.
 3. If mailbox conversion fails, licenses are not removed and the run is `PartiallyFailed` with a message explaining why licenses were kept.
 4. A user over 50 GB mailbox or with litigation hold shows the warning in the preview; a user holding a privileged directory role cannot be offboarded by a Technician (403 with explanation) and requires an Admin to confirm.
-5. Approval is required by default; submitting requires the destructive confirmation dialog, and the danger button stays disabled until the exact UPN is typed (E2E); a scheduled offboarding executes at the leave time (injectable clock) and the dashboard lists it as an upcoming leaver.
+5. Approval is required by default; submitting requires the destructive confirmation dialog, and the danger button stays disabled until the exact UPN is typed (E2E); a scheduled offboarding executes at the leave time (injectable clock) and the dashboard lists it as an upcoming offboarding.
 6. OneDrive access is granted and a scheduled reversal removes it after N days (time-travel test); the audit log records both.
 7. "Restore user" returns groups and licenses to the pre-offboarding set (snapshot equality, excluding the mailbox type), with its own preview and approval.
 8. Against a live test tenant **[manual, recorded]**: offboard a pilot user end to end; confirm in the Exchange admin center that the mailbox is shared and the license is freed.
@@ -648,11 +651,11 @@ Branding work is spread through the milestones rather than saved for the end: to
 
 - `Rollcall.Agent` Windows service per 4.7: enrollment, signed-JWT auth, long-poll leasing, heartbeat, structured logging to the Windows Event Log and a rolling file, self-reported version.
 - `Rollcall.Agent.Installer`: signed MSI or a PowerShell bootstrap script (`install-agent.ps1 -PortalUrl … -Token … -ServiceAccount 'DOMAIN\rollcall-gmsa$'`) that installs the service under the gMSA, verifies `Test-ADServiceAccount`, and starts it. Document the commands to create the gMSA and delegate rights (create/delete/modify users and groups, reset password, move objects) on the allowed OUs only.
-- Admin › Agents: create enrollment command, list agents with status (connected, last seen, version), revoke an agent, configure allowed OUs (picked from `ad.ou.list`), leavers OU, default new-user OU, and the Entra Connect server name.
+- Admin › Agents: create enrollment command, list agents with status (connected, last seen, version), revoke an agent, configure allowed OUs (picked from `ad.ou.list`), Offboarding OU, default new-user OU, and the Entra Connect server name.
 - AD step types for every job type in 4.7, with Plan (via `ad.*.get`) / Apply / Verify, routed through `job_queue` queue `agent`.
 - Hybrid routing in onboarding, offboarding, attributes, and groups per table 4.8.
 - Hybrid onboarding: AD create in template OU → set attributes → AD groups → `sync.delta` → `WaitFor` user in Entra (match on `onPremisesSamAccountName`/UPN, default timeout 45 min) → usage location, licenses, cloud groups, MFA/TAP.
-- Hybrid offboarding: Graph revoke sessions immediately → AD disable → AD password reset → remove AD groups (undo data) → move to leavers OU → `sync.delta` → cloud steps from M7 (mailbox, licenses, cloud groups, MFA).
+- Hybrid offboarding: Graph revoke sessions immediately → AD disable → AD password reset → remove AD groups (undo data) → move to Offboarding OU → `sync.delta` → cloud steps from M7 (mailbox, licenses, cloud groups, MFA).
 - AD groups management: create group in an allowed OU, change scope/type, rename, move between OUs, add/remove members.
 - Dashboard and Connections show agent health; runs needing the agent while it is offline wait (status "Waiting for AD agent") instead of failing, up to a configurable timeout.
 
@@ -663,7 +666,7 @@ Branding work is spread through the milestones rather than saved for the end: to
 3. The agent refuses a write outside allowed OUs even if the portal sends one (agent unit test with a forged job).
 4. With the in-memory `IDirectory` fake, every AD step type has success, no-op, and failure tests; contract tests pin the JSON of every job and result type shared via `Rollcall.Contracts`.
 5. Hybrid onboarding E2E with fakes: the run waits on `WaitFor` until FakeGraph "syncs" the user after a simulated delay, then completes the cloud steps; a sync timeout fails the step with a message pointing to Entra Connect troubleshooting.
-6. Hybrid offboarding E2E with fakes: AD account disabled and in the leavers OU, AD groups removed and recorded, sync triggered, then mailbox and licenses handled in the M7 order.
+6. Hybrid offboarding E2E with fakes: AD account disabled and in the Offboarding OU, AD groups removed and recorded, sync triggered, then mailbox and licenses handled in the M7 order.
 7. Editing department on a synced user routes through the agent (not Graph) and triggers a delta sync.
 8. With the agent stopped, a hybrid run shows "Waiting for AD agent" and resumes within 60 s of the agent restarting.
 9. Lab domain **[manual, recorded]**: install the agent under a gMSA via the documented commands on Windows Server 2022; run a hybrid onboarding and offboarding against a test tenant with Entra Connect; confirm in ADUC and Entra.
