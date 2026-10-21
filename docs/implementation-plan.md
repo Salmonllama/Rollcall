@@ -166,8 +166,7 @@ Names are indicative; the agent may refine them in an ADR.
 | --- | --- | --- |
 | `tenant` | The one connected tenant | `tenant_id`, `app_client_id`, `primary_domain`, `connected_at` |
 | `app_certificate` | Current and previous app certs | `thumbprint`, `not_after`, `encrypted_private_key`, `status` (pending, active, retiring, retired) |
-| `portal_user` | Technicians who have signed in or been invited | `entra_object_id`, `upn`, `display_name`, `manual_roles[]`, `group_roles[]`, `group_roles_refreshed_at`, `disabled` |
-| `role_group_mapping` | Entra security groups that grant a portal role | `role`, `group_object_id`, `group_display_name`, `created_by`, `created_at` |
+| `portal_user` | Technicians who have signed in | `entra_object_id`, `upn`, `display_name`, `roles[]`, `disabled` |
 | `role_template` | Job definitions | `name`, `version`, `definition` (JSONB, schema-validated), `is_archived` |
 | `approval_rule` | Which actions need a second person | `action_type`, `required`, `approver_role` |
 | `workflow_run` | One onboarding/offboarding/management request | `type`, `status`, `requested_by`, `target_user_ref`, `scheduled_for`, `plan` (frozen preview, JSONB), `plan_hash` |
@@ -224,16 +223,7 @@ Rules:
 - OIDC against `https://login.microsoftonline.com/{tenantId}/v2.0`, single-tenant. Only accounts from the connected tenant can sign in.
 - The app registration has a **Web** redirect URI `https://<host>/signin-oidc`. Token validation per `Microsoft.Identity.Web` defaults.
 - Session: encrypted, `HttpOnly`, `Secure`, `SameSite=Lax` cookie, 8-hour absolute lifetime, 1-hour idle. CSRF protection on all state-changing endpoints (antiforgery token header).
-- **Portal roles** are `Technician`, `Approver`, and `Admin`. A user may have several. A signed-in tenant user with no roles sees an "ask your admin for access" page and can do nothing else.
-- **Two sources of roles, combined.** A user's effective roles are the union of:
-  1. **Manual roles** (`portal_user.manual_roles`), set by an Admin on Admin › Team.
-  2. **Group roles** (`portal_user.group_roles`), derived from Entra ID security groups that an Admin maps to a role on Admin › Team › Group mappings (`role_group_mapping`). Each role can map to zero or more groups; membership is transitive (nested groups count).
-  Teams can use either or both. A team that manages access in Entra maps groups and assigns nothing by hand; a team without suitable groups assigns roles manually.
-- **How group roles are evaluated.** Rollcall does not rely on the `groups` claim in the ID token (it overflows above 200 groups and needs extra app configuration). Instead, at sign-in the API calls Graph app-only `POST /users/{id}/checkMemberGroups` with the mapped group IDs and stores the result in `group_roles`. It re-checks at least every **15 minutes** while a session is active (on the next request after the interval), so removing someone from a group removes their role within 15 minutes; an Admin can force it with "Refresh roles now". If Graph is unreachable, the last result is used for up to 1 hour, after which group roles are dropped (fail closed) until the check succeeds. This uses the baseline read permissions (`User.Read.All`, `Group.Read.All`) and adds no new Graph permission.
-- **Changes are audited.** Adding or removing a mapping, and every change to a user's group-derived roles found at evaluation (for example "Approver removed: no longer in sg-rollcall-approvers"), writes an audit event.
-- **Team page shows the source** of each role ("Manual" or "via sg-rollcall-admins"). A group-derived role cannot be removed by hand; the page says to remove the user from the group in Entra ID.
-- **Guarding the Admin role.** Anyone who can change a mapped group's membership can grant themselves that role. When an Admin maps a group to `Admin`, Rollcall shows the group's owners and warns unless the group is role-assignable (`isAssignableToRole = true`), since only Privileged Role Administrators can change those. Mapping changes require an Admin and are subject to approval rules like any other sensitive setting.
-- **No lockout.** Rollcall refuses any change (removing a manual Admin role, deleting an Admin mapping, disabling a user) that would leave zero users with an effective Admin role, and keeps at least one **manual** Admin at all times so that a deleted or emptied Entra group cannot lock everyone out.
+- **Portal roles** are stored in `portal_user.roles`: `Technician`, `Approver`, `Admin`. A user may have several. A signed-in tenant user with no roles sees an "ask your admin for access" page and can do nothing else.
 - Role matrix (enforced server-side by policy, mirrored in UI):
 
 | Capability | Technician | Approver | Admin |
@@ -246,8 +236,8 @@ Rules:
 | View and export audit log | ✓ (own actions) | ✓ | ✓ |
 
 - **Nobody approves their own request**, regardless of roles.
-- **Bootstrap:** the setup wizard (protected by `ROLLCALL_SETUP_TOKEN`) gives the first person to complete Entra sign-in during setup a manual Admin role, then permanently invalidates the setup token.
-- **Break-glass:** `install.sh admin-reset <upn>` grants a manual Admin role to a UPN from the host shell and writes an audit event. Documented in the admin guide.
+- **Bootstrap:** the setup wizard (protected by `ROLLCALL_SETUP_TOKEN`) makes the first person to complete Entra sign-in during setup an Admin, then permanently invalidates the setup token.
+- **Break-glass:** `install.sh admin-reset <upn>` grants Admin to a UPN from the host shell and writes an audit event. Documented in the admin guide.
 
 ### 4.6 Permission manifest
 
@@ -450,9 +440,7 @@ Branding work is spread through the milestones rather than saved for the end: to
   5. Sign in as the first admin with Entra (OIDC); that user becomes Admin; setup token is invalidated.
   6. Optional: enable Hybrid AD (links to M9 flow; hidden until M9 ships).
 - Technician sign-in and session handling per 4.5; role-based authorization policies; "no access" page.
-- Admin › Team page: list portal users who have signed in or been invited, with each role's source (Manual or via a named group); "invite" by UPN or by picking from the tenant directory (pre-creates the `portal_user` with manual roles); edit manual roles; disable access; "Refresh roles now".
-- Admin › Team › Group mappings: map each portal role to one or more Entra security groups (searchable group picker), with the owner list and role-assignable warning for Admin mappings; role evaluation at sign-in and refresh via `checkMemberGroups` per 4.5; last-Admin and last-manual-Admin guards.
-- Optional step in the setup wizard after first sign-in: "Manage access with Entra groups?" linking to Group mappings.
+- Admin › Team page: list portal users who have signed in, plus "invite" by UPN or by picking from the tenant directory (pre-creates the `portal_user` with roles); edit roles; disable access.
 - `install.sh admin-reset <upn>` implemented.
 - Connections health card on Admin › Connections: tenant, certificate expiry, permissions granted vs required, directory roles present.
 
@@ -468,16 +456,8 @@ Branding work is spread through the milestones rather than saved for the end: to
 8. Role matrix in 4.5 is covered by an authorization test per endpoint group (generated table test: role × endpoint → expected status).
 9. The app shell and wizard pass axe-core with zero serious/critical issues in light and dark mode, and a visual snapshot test exists for each wizard step and for each component on `/dev/components`.
 10. The built SPA makes no request to any third-party host (Playwright asserts every network request is same-origin); fonts render as Atkinson Hyperlegible (computed style check); the Stylelint token rule passes and fails on a planted `#0078D4`.
-11. Group role mapping (integration tests with FakeGraph):
-    - A user in a group mapped to `Approver` and with no manual roles can approve after sign-in; a user in a nested child group of that group can too.
-    - Removing the user from the group in FakeGraph removes the role at the next evaluation, and with the injectable clock the role is gone within 15 minutes for an active session without signing out; an audit event names the role and group.
-    - Effective roles are the union: a manual `Technician` plus group `Approver` yields both; removing the mapping leaves `Technician`.
-    - The Team page cannot remove a group-derived role (API returns 409 with a message naming the group).
-    - Deleting the only Admin mapping or removing the last manual Admin is refused with a plain-language message; with Graph unreachable, group roles persist for 1 hour and are dropped after (fail-closed test).
-    - Mapping a non-role-assignable group to `Admin` shows the warning and the group's owners.
-    - The token's `groups` claim is never read (test signs in with a token carrying a forged `groups` claim and asserts no role is granted from it).
-12. The theme switch persists across reloads, System follows `prefers-color-scheme`, and the sidebar collapses to the rail below 1024px and to a drawer below 640px.
-13. Docs: `docs/day-1/03-app-registration.md`, `04-directory-roles.md`, `05-first-admin.md` (covers both manual roles and group mappings, recommending role-assignable groups for Admin); `docs/admin/portal-roles.md` (role matrix, the two role sources, evaluation timing, lockout guards, break-glass); `docs/reference/permissions.md` generated from the manifest; CI fails if it is stale.
+11. The theme switch persists across reloads, System follows `prefers-color-scheme`, and the sidebar collapses to the rail below 1024px and to a drawer below 640px.
+12. Docs: `docs/day-1/03-app-registration.md`, `04-directory-roles.md`, `05-first-admin.md`; `docs/reference/permissions.md` generated from the manifest; CI fails if it is stale.
 
 ---
 
