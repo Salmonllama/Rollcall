@@ -1,0 +1,84 @@
+/*
+ * Rollcall design tokens. Source of truth: docs/brand-guide.md.
+ * Light values on :root, dark values under prefers-color-scheme and [data-theme="dark"].
+ * Contrast ratios are listed in the brand guide; keep them at WCAG 2.2 AA or better when changing a value.
+ */
+:root {
+  /* Surfaces */
+  --rc-bg: #F6F8F8;
+  --rc-surface: #FFFFFF;
+  --rc-sunken: #EDF2F2;
+  --rc-border: #D3DEDF;          /* dividers, card edges (decorative) */
+  --rc-border-strong: #7A8F92;   /* input and control outlines, 3:1 minimum */
+
+  /* Text */
+  --rc-text: #13252A;
+  --rc-text-muted: #4C6166;
+  --rc-text-on-primary: #FFFFFF;
+
+  /* Brand */
+  --rc-primary: #0E6A73;         /* Roster teal */
+  --rc-primary-hover: #0A5359;
+  --rc-primary-subtle: #E3F2F3;
+  --rc-accent: #E8A33D;          /* Marigold: decoration and logo only, never text on light */
+  --rc-focus: #0E6A73;
+
+  /* Status */
+  --rc-success: #1D7A3F;  --rc-success-subtle: #E6F4EA;
+  --rc-warning: #93590A;  --rc-warning-subtle: #FDF1DC;
+  --rc-danger:  #B42318;  --rc-danger-subtle:  #FDE8E6;
+  --rc-info:    #2558A8;  --rc-info-subtle:    #E7EFFB;
+
+  /* Type */
+  --rc-font-sans: "Atkinson Hyperlegible Next", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --rc-font-mono: "Atkinson Hyperlegible Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --rc-text-xs: 0.75rem;    /* 12px  captions, table meta */
+  --rc-text-sm: 0.875rem;   /* 14px  tables, secondary text */
+  --rc-text-md: 1rem;       /* 16px  body, inputs */
+  --rc-text-lg: 1.25rem;    /* 20px  section headings */
+  --rc-text-xl: 1.5rem;     /* 24px  page titles */
+  --rc-text-2xl: 2rem;      /* 32px  dashboard numbers, docs H1 */
+
+  /* Space (4px base) */
+  --rc-space-1: 4px;  --rc-space-2: 8px;  --rc-space-3: 12px; --rc-space-4: 16px;
+  --rc-space-5: 24px; --rc-space-6: 32px; --rc-space-7: 48px; --rc-space-8: 64px;
+
+  /* Shape and depth */
+  --rc-radius-sm: 4px;   /* badges, checkboxes */
+  --rc-radius-md: 6px;   /* buttons, inputs */
+  --rc-radius-lg: 10px;  /* cards, dialogs */
+  --rc-shadow-overlay: 0 8px 24px rgb(19 37 42 / 0.16);  /* menus, dialogs, toasts only */
+
+  /* Motion */
+  --rc-duration: 150ms;
+  --rc-ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --rc-bg: #0C1618; --rc-surface: #132226; --rc-sunken: #091113;
+    --rc-border: #28403F; --rc-border-strong: #5E7A7D;
+    --rc-text: #E4EDEE; --rc-text-muted: #9CB1B4; --rc-text-on-primary: #06282C;
+    --rc-primary: #5CC4CB; --rc-primary-hover: #7DD3D9; --rc-primary-subtle: #0F3236;
+    --rc-accent: #F0B357; --rc-focus: #7DD3D9;
+    --rc-success: #5BC585; --rc-success-subtle: #12301F;
+    --rc-warning: #E8A84A; --rc-warning-subtle: #33260F;
+    --rc-danger:  #F47C70; --rc-danger-subtle:  #3A1714;
+    --rc-info:    #83AEF2; --rc-info-subtle:    #15233D;
+    --rc-shadow-overlay: 0 8px 24px rgb(0 0 0 / 0.5);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --rc-bg: #0C1618; --rc-surface: #132226; --rc-sunken: #091113;
+  --rc-border: #28403F; --rc-border-strong: #5E7A7D;
+  --rc-text: #E4EDEE; --rc-text-muted: #9CB1B4; --rc-text-on-primary: #06282C;
+  --rc-primary: #5CC4CB; --rc-primary-hover: #7DD3D9; --rc-primary-subtle: #0F3236;
+  --rc-accent: #F0B357; --rc-focus: #7DD3D9;
+  --rc-success: #5BC585; --rc-success-subtle: #12301F;
+  --rc-warning: #E8A84A; --rc-warning-subtle: #33260F;
+  --rc-danger:  #F47C70; --rc-danger-subtle:  #3A1714;
+  --rc-info:    #83AEF2; --rc-info-subtle:    #15233D;
+  --rc-shadow-overlay: 0 8px 24px rgb(0 0 0 / 0.5);
+  color-scheme: dark;
+}
