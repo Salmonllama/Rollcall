@@ -81,7 +81,7 @@ Everything above lives behind one web portal with one sign-in; technicians never
 - **User search** with a single user page: attributes, groups, licenses, MFA methods, CA policies that apply, and change history.
 - **Workflows** for onboarding and offboarding, each with a preview step.
 - **Templates and settings** area for admins: role templates, approval rules, tenant and AD connection settings.
-- **Roles inside the portal**: Technician (run workflows), Approver, and Admin (templates, settings, CA changes).
+- **Roles inside the portal**: Technician (run workflows), Approver, and Admin (templates, settings, CA changes). Admins can assign roles to people directly in the portal, map each role to one or more Entra ID security groups so access follows group membership, or both.
 
 ## Architecture
 
@@ -198,7 +198,7 @@ The guide walks one admin through the whole first day as numbered steps, each wi
 2. **Run the install command** and confirm the portal loads over HTTPS.
 3. **Create the Entra app registration:** upload the portal-generated certificate, add the permissions, and grant admin consent.
 4. **Assign directory roles** to the app's service principal, such as Exchange Administrator.
-5. **Sign in as the first admin** with Entra SSO and set portal roles for the team.
+5. **Sign in as the first admin** with Entra SSO and set portal roles for the team, either by assigning them directly or by mapping each role to an Entra ID security group.
 6. **Hybrid only: install the AD agent** as a gMSA, delegate rights on the target OUs, and confirm the agent shows as connected.
 7. **Build the first role template** from a real job in the organization.
 8. **Run a test onboarding and offboarding** on a pilot user and check the audit log.
