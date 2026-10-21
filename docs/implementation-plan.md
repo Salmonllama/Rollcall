@@ -38,7 +38,7 @@ When this plan and the product spec disagree, the product spec wins on *what* to
 - All acceptance criteria pass; CI is green on `main` after merge.
 - New code has unit tests; new workflow steps have fake-backed integration tests (see [Testing strategy](#6-testing-strategy)).
 - No new warnings from the linters/analyzers configured in M0.
-- User-facing strings follow the voice rules in `brand-guide.md`.
+- User-facing strings follow the voice rules in `brand-guide.md` §11; visuals use only tokens from `docs/brand/tokens.css`.
 - Docs updated; `CHANGELOG.md` has an entry under `Unreleased`.
 - Any new Graph permission or directory role is added to `docs/reference/permissions.md` and to the permission manifest (see 4.6).
 
@@ -53,7 +53,9 @@ These are fixed for v1 unless an ADR changes them.
 | Backend language | C# on **.NET 10 (LTS)** | First-class Microsoft Graph SDK; can host PowerShell in-process for Exchange Online; same language as the Windows AD agent, so contracts are shared |
 | Web API | ASP.NET Core minimal APIs, OpenAPI document generated at build | Small surface, typed contracts, generated TypeScript client |
 | Frontend | **React 19 + TypeScript**, Vite, React Router, TanStack Query | Mainstream, easy for contributors; SPA served by the API container |
-| UI components | Headless primitives (Radix UI) styled with design tokens from `brand-guide.md` via CSS variables | Accessible by default; brand lives in one token file |
+| UI components | Headless primitives (Radix UI) styled only with the CSS variables in `docs/brand/tokens.css` | Accessible by default; brand lives in one token file |
+| Fonts | Atkinson Hyperlegible Next (400/500/700) and Atkinson Hyperlegible Mono (400/500), self-hosted via `@fontsource/atkinson-hyperlegible-next` and `@fontsource/atkinson-hyperlegible-mono`; never a CDN | Brand guide §5; works on locked-down networks, leaks no IPs |
+| Icons | Lucide (`lucide-react`), outline only, using the icon map in brand guide §7 | Brand guide §7; ISC license |
 | Database | **PostgreSQL 17** | Spec suggests it; JSONB for previews and step payloads; `SKIP LOCKED` job queue |
 | ORM / migrations | EF Core with Npgsql, code-first migrations | Migrations run by `install.sh update` |
 | Job queue | Built-in Postgres queue (`SELECT … FOR UPDATE SKIP LOCKED`) | No extra container; jobs need step-level state that lives in Postgres anyway |
@@ -100,7 +102,8 @@ rollcall/
 │   └── Rollcall.Agent.Installer/   # MSI / PowerShell bootstrap for the agent
 ├── web/                            # React SPA (Vite)
 │   ├── src/
-│   │   ├── theme/tokens.css        # generated from brand-guide.md tokens
+│   │   ├── theme/                  # imports docs/brand/tokens.css; fonts; theme switcher
+│   │   ├── dev/components/         # component reference page (dev builds only)
 │   │   ├── components/
 │   │   ├── features/               # one folder per feature area
 │   │   └── api/                    # generated OpenAPI client
@@ -116,6 +119,7 @@ rollcall/
 ├── docs/
 │   ├── product-spec.md
 │   ├── brand-guide.md
+│   ├── brand/                      # logo SVGs, favicon, tokens.css (single source of design tokens)
 │   ├── implementation-plan.md
 │   ├── adr/
 │   ├── day-1/                      # day-1 deployment guide, one page per step
@@ -269,18 +273,45 @@ The plan step that would write a mastered-in-AD attribute through Graph for a sy
 ### 4.9 Frontend structure
 
 - Routes: `/` Dashboard, `/users`, `/users/:id`, `/onboard`, `/offboard/:id?`, `/runs`, `/runs/:id`, `/approvals`, `/groups`, `/licenses`, `/conditional-access`, `/audit`, `/admin/templates`, `/admin/approval-rules`, `/admin/team`, `/admin/connections`, `/admin/agents`, `/admin/settings`, `/setup/*`, `/help`.
-- One shared **Change preview** component renders any `StepPlan` list the same way everywhere (grouped by area, before → after, no-ops collapsed, warnings highlighted). The same component renders the approval view and the run detail.
-- One shared **Run status** component shows per-step status, errors in plain language, and the Retry button.
 - All data access through the generated OpenAPI client and TanStack Query.
-- **Branding:** colors, typography, spacing, radius, elevation, iconography, logo usage, and copy voice come from `brand-guide.md`. Encode tokens once in `web/src/theme/tokens.css` (light and dark), and never hard-code a color, font, or spacing value in a component. Lint rule: no hex colors or raw `px` font sizes outside `tokens.css`.
-- **Accessibility:** WCAG 2.2 AA. Every page passes `axe-core` in Playwright with zero serious or critical violations. Full keyboard operation, visible focus, no information conveyed by color alone (status uses icon + text + color).
+
+**Design system.** [`brand-guide.md`](brand-guide.md) is the source of truth for everything visual and every user-facing string. The rules below are how the code honours it.
+
+- **Tokens.** `docs/brand/tokens.css` is the only place colors, type sizes, spacing, radii, shadows, durations, and easing are defined, for light and dark. `web/` imports that file directly (Vite alias), so a brand change is a one-file change. Components use only `var(--rc-*)`. A Stylelint rule fails CI on any hex/rgb/hsl color, raw `px` font size, or `box-shadow` literal outside `tokens.css`, and on Microsoft brand blue `#0078D4` anywhere.
+- **Theme.** Light, Dark, and System (default) in the user menu, stored per browser; dark is a real theme from the tokens, never an inversion.
+- **Fonts.** Self-hosted Atkinson Hyperlegible Next and Mono via `@fontsource`. CSP stays `font-src 'self'`. Mono for every identifier a technician might copy or read aloud (UPNs, emails in tables, TAP codes, passwords, object IDs, thumbprints, commands). Tabular numbers in tables, counts, and dates.
+- **Icons.** Lucide only, using the brand guide's icon map for navigation and concepts and its status-icon table for states. A missing icon is drawn on the same grid and added to `docs/brand/icons/`.
+- **App shell** (brand guide §6): 240px sidebar collapsible to a 64px rail, nav order Dashboard, Users, Onboarding, Offboarding, Groups, Licenses, Conditional Access, Approvals, Audit log, then Templates and Settings for Admins, with Help and the user menu at the bottom. 56px top bar with global search (shortcut `/`), job activity indicator, and the tenant name in Mono. Breakpoints 640 / 1024 / 1280px; default table rows 44px, Compact 36px.
+- **Run states → brand status.** Every run and step state maps to one status from brand guide §7, always shown as icon + word + color:
+
+| Engine state | Brand status (icon) |
+| --- | --- |
+| Draft, Queued | Queued (`circle-dashed`) |
+| Scheduled | Scheduled (`calendar-clock`) |
+| AwaitingApproval | Awaiting approval (`hourglass`) |
+| Running, Waiting for AD agent | Running (`loader-circle`) |
+| NeedsReview, PartiallyFailed with no failed step pending | Needs attention (`triangle-alert`) |
+| Failed step, PartiallyFailed, Rejected | Failed (`circle-x`) |
+| Cancelled, skipped (no-op) step | Paused or skipped (`circle-pause`) |
+| Succeeded | Succeeded (`circle-check`) |
+
+- **Signature components** (brand guide §8), each built once and reused:
+  - **Change preview.** Renders any list of `StepPlan`s grouped by target system (Entra ID, Exchange Online, on-prem AD) then by area. Lines start with a Mono operation marker: `+` add (success), `−` remove (danger), `~` change (info), then plain-language text and the exact object name; attribute changes show `old → new`. No-op lines are muted with the reason; lines needing approval carry an "Approval required" badge. A summary bar on top ("12 changes across 3 systems · 2 need approval") and a primary button that repeats the count ("Run 12 changes"). The same component renders the approval view, the run detail, and the audit entry, so they look identical.
+  - **Job and step progress.** Vertical step list with status icon, name, target system, and duration; a failed step expands to a plain-language message, the raw Microsoft/AD error in a collapsible Mono block, and **Retry step**. Never one spinner for many steps. Updates announced in a polite live region.
+  - **Approval banner.** Full-width info banner on a pending run: requester, time, link to the preview, Approve/Reject for approvers; the requester sees "Waiting for an approver" instead.
+  - **Destructive confirmation.** Offboarding, removing a CA exclusion, and bulk removals open a dialog that restates the impact in one sentence and enables the danger button only after the technician types the target's UPN (or the affected count for bulk actions).
+  - Buttons (Primary, Secondary, Ghost, Danger; one primary per view; labels name the action, never "OK"/"Submit"), form fields, status badge, tables, toasts, empty states, and credential display (TAP/password at `--rc-text-lg` Mono, grouped in fours, with Copy).
+  - All of these appear on a **component reference page** at `/dev/components` in development builds, in every state, light and dark. Visual snapshot tests run against this page.
+- **Copy.** Every user-facing string follows brand guide §11: sentence case, active voice, name the object and count, errors say what happened and what to do, no "Oops", "Success!", or "Are you sure?". Use the word list (for example "block sign-in" for cloud users, "disable" only for AD; "remove" not "delete"). Strings live in one resource file per feature so they can be reviewed together. Dates show as "Nov 3, 2026" in the UI and ISO 8601 in exports.
+- **Motion.** 150ms `--rc-duration`, opacity/transform only; the Running spinner is the only loop and stops under `prefers-reduced-motion`.
+- **Accessibility:** WCAG 2.2 AA. Every page passes `axe-core` in Playwright with zero serious or critical violations in light and dark. Full keyboard operation, visible 2px `--rc-focus` ring, dialogs trap and return focus, no information conveyed by color alone, text usable at 200% zoom, and the approval pages work at 320px wide.
 
 ---
 
 ## 5. Cross-cutting rules
 
 - **API conventions.** JSON, `camelCase`, RFC 9457 problem details for errors, cursor pagination (`?cursor=&limit=`), `ETag`/`If-Match` on editable resources (templates, settings).
-- **Error messages** shown to users say what happened, why (if known), and what to do next, in the brand voice. Raw Graph error codes appear only in an expandable "Technical details" section.
+- **Error messages** shown to users say what happened, why (if known), and what to do next, in the brand voice (brand guide §11: "Couldn't convert the mailbox to shared. Exchange Online reported that the mailbox is on litigation hold. Remove the hold or skip this step, then retry."). Raw Graph or AD errors appear only in the collapsible Mono block of the step progress component.
 - **Graph usage.** Use `$select` on every read. Respect throttling (`Retry-After`). Batch with `$batch` where it reduces calls (group membership reads, bulk attribute edits). Never page through all users on a hot path; use `$search`/`$filter` with `ConsistencyLevel: eventual`.
 - **Time.** Store UTC; display in the browser's time zone; schedule start/leave dates in a tenant-default time zone set in Settings (scheduled for 06:00 local by default, configurable).
 - **Feature flags.** Each feature area (Licenses, CA, MFA, Mailbox, OneDrive, Hybrid AD) can be turned off in Settings; off means hidden in UI, rejected by API, and its permissions dropped from the manifest.
@@ -336,7 +367,7 @@ Overview:
 | M10 | Operations and hardening | Certificate rotation, audit export and verification, health pages, security review |
 | M11 | Documentation and v1.0 release | Complete doc set, day-1 guide walkthrough on a clean server, release |
 
-Branding work is spread through the milestones rather than saved for the end: tokens and app shell in M2, shared components in M3 and M4, and a polish and consistency pass in M10.
+Branding work is spread through the milestones rather than saved for the end: tokens, fonts, theme, and app shell in M2; change preview, step progress, approval banner, and destructive confirmation in M3 and M7; the remaining raster and social-preview assets and a full consistency audit in M10; the docs site styling in M11.
 
 ---
 
@@ -346,7 +377,7 @@ Branding work is spread through the milestones rather than saved for the end: to
 
 **Tasks**
 
-- Add `LICENSE` (GPLv3 text), `README.md` (pitch, status, links), `CONTRIBUTING.md` (DCO sign-off, coding standards, PR rules from section 1), `CODE_OF_CONDUCT.md`, `SECURITY.md` (private vulnerability reporting).
+- Add `LICENSE` (GPLv3 text), `README.md` (logo from `docs/brand/rollcall-logo.svg`, pitch, status, links, and the Microsoft non-affiliation line from brand guide §2 as its footer), `CONTRIBUTING.md` (DCO sign-off, coding standards, PR rules from section 1), `CODE_OF_CONDUCT.md`, `SECURITY.md` (private vulnerability reporting).
 - Create the solution and projects from section 3 with placeholders that compile; create the `web/` Vite app.
 - Configure analyzers: .NET (`TreatWarningsAsErrors`, nullable enabled, `dotnet format` check), ESLint + Prettier + TypeScript strict for `web/`, `shellcheck` for `install/`.
 - CI workflow: build, test, lint for .NET and web; license compliance check (`dotnet-project-licenses` or equivalent for NuGet, `license-checker` for npm) failing on any non-GPLv3-compatible license; container image build (no push on PRs).
@@ -375,7 +406,8 @@ Branding work is spread through the milestones rather than saved for the end: to
 - Non-interactive mode: every prompt has a flag (`--hostname`, `--tls letsencrypt|custom`, `--email`, `--cert`, `--key`, `--yes`) for automation and CI.
 - Pin image tags to the installer's release version; `update` fetches the latest installer, pulls the matching images, takes an automatic backup, runs migrations (the `app` container runs EF migrations on start behind a DB advisory lock), and restarts.
 - `backup` writes `rollcall-backup-<timestamp>.tar.gz` containing a `pg_dump` (custom format), `.env`, and rendered config, mode `0600`. `restore` stops the stack, restores, and starts it. Warn that the archive contains the master key.
-- `app` serves a placeholder page with Rollcall's name and logo from `brand-guide.md` and the `/healthz` and `/readyz` endpoints. `worker` writes heartbeats.
+- Installer output follows brand guide §13: print each step, then `✓` or `✕` with a one-line result; green/red only on those marks; plain output when `NO_COLOR` is set or stdout is not a TTY; on failure print what failed, the likely cause, and the next command; finish with the URL on its own line and "Open https://<host> to finish setup."
+- `app` serves a placeholder page with the Rollcall logo (`docs/brand/`) and favicon, and the `/healthz` and `/readyz` endpoints. `worker` writes heartbeats.
 - Publish images to GHCR on tags (`v*`) and on `main` as `edge`.
 
 **Acceptance criteria**
@@ -388,7 +420,8 @@ Branding work is spread through the milestones rather than saved for the end: to
 6. `install.sh backup` then `install.sh uninstall --purge` then fresh `install` then `install.sh restore <archive>` results in the same data (verified by a row count and checksum of a seeded table).
 7. `install.sh update` from version N-1 to N runs migrations and the stack returns to healthy; a failed migration leaves the previous version running and prints the backup path. (Tested with a deliberately broken migration in CI.)
 8. `shellcheck install/install.sh` passes; `bats` tests cover argument parsing and every subcommand's help text.
-9. Docs: `docs/day-1/01-prerequisites.md` and `docs/day-1/02-install.md` written, each with the expected result and how to check it.
+9. With `NO_COLOR=1`, installer output contains no ANSI escape sequences (bats test); a forced failure (for example port 443 in use) prints the failed step, the likely cause, and a next command.
+10. Docs: `docs/day-1/01-prerequisites.md` and `docs/day-1/02-install.md` written, each with the expected result and how to check it.
 
 ---
 
@@ -398,7 +431,7 @@ Branding work is spread through the milestones rather than saved for the end: to
 
 **Tasks**
 
-- Branding foundation: implement `tokens.css` (light and dark) from `brand-guide.md`; app shell (header with logo, navigation, user menu, Help link), typography, buttons, inputs, form layout, alerts, and empty states per the guide.
+- Branding foundation (brand guide §§3–8): import `docs/brand/tokens.css`; bundle the Atkinson Hyperlegible Next and Mono fonts via `@fontsource`; Light/Dark/System theme switch; the app shell from 4.9 (sidebar with logo and nav, rail collapse, top bar with search and tenant name in Mono, Help and user menu); buttons, form fields, status badge, alerts, toasts, empty states, and the credential display; the `/dev/components` reference page; the Stylelint token rule; favicon and PNG/PWA icons generated from the SVGs at build time.
 - Setup wizard at `/setup`, gated by the setup token (entered once, stored in a short-lived cookie). Steps:
   1. Welcome and checklist (what you need: Global Administrator for consent, the tenant's primary domain).
   2. Generate certificate (see 4.2); show thumbprint and expiry; download `.cer`.
@@ -421,8 +454,10 @@ Branding work is spread through the milestones rather than saved for the end: to
 6. A tenant user without roles who signs in sees the "ask your admin" page and receives 403 from every API except `/api/me`.
 7. A user from a different tenant cannot sign in (token validation test with a foreign `tid`).
 8. Role matrix in 4.5 is covered by an authorization test per endpoint group (generated table test: role × endpoint → expected status).
-9. The app shell and wizard pass axe-core with zero serious/critical issues in light and dark mode, and a visual snapshot test exists for each wizard step.
-10. Docs: `docs/day-1/03-app-registration.md`, `04-directory-roles.md`, `05-first-admin.md`; `docs/reference/permissions.md` generated from the manifest; CI fails if it is stale.
+9. The app shell and wizard pass axe-core with zero serious/critical issues in light and dark mode, and a visual snapshot test exists for each wizard step and for each component on `/dev/components`.
+10. The built SPA makes no request to any third-party host (Playwright asserts every network request is same-origin); fonts render as Atkinson Hyperlegible (computed style check); the Stylelint token rule passes and fails on a planted `#0078D4`.
+11. The theme switch persists across reloads, System follows `prefers-color-scheme`, and the sidebar collapses to the rail below 1024px and to a drawer below 640px.
+12. Docs: `docs/day-1/03-app-registration.md`, `04-directory-roles.md`, `05-first-admin.md`; `docs/reference/permissions.md` generated from the manifest; CI fails if it is stale.
 
 ---
 
@@ -436,7 +471,8 @@ Branding work is spread through the milestones rather than saved for the end: to
 - Postgres job queue with leasing, visibility timeout, and dead-lettering after max attempts; worker host with graceful shutdown (finishes or releases leases within 30 s on `SIGTERM`).
 - Scheduler: runs whose `scheduled_for` is due are queued; scheduled reversals fire when due.
 - Approval rules (Admin › Approval rules): per action type, required yes/no; defaults ON for offboarding, CA changes, and template-driven onboarding of users with admin roles; OFF otherwise.
-- Approvals inbox (`/approvals`) showing the frozen preview, requester, comment box, approve/reject.
+- Approvals inbox (`/approvals`) and the approval banner (4.9) showing the frozen preview, requester, comment box, approve/reject.
+- Change preview and job/step progress components exactly as specified in 4.9 and brand guide §8.
 - Audit log table with hash chain; `/audit` page with filters (actor, action, target, date range, outcome); technicians see only their own actions.
 - FakeGraph (6.2) foundation; fake Exchange runner interface.
 - First step type: `graph.user.updateAttributes` (title only for now), wired to a "Edit job title" action on a stub user page.
@@ -452,8 +488,9 @@ Branding work is spread through the milestones rather than saved for the end: to
 7. Two concurrent runs on the same user execute one after the other (asserted by timestamps); runs on different users execute in parallel.
 8. The audit log records every lifecycle event in 4.4 with actor, target, and outcome; the application's DB role gets `permission denied` on `UPDATE`/`DELETE` of `audit_event` (integration test); altering a row as superuser makes "Verify audit log" report the first broken row.
 9. A scheduled run set for T+2 minutes executes within 60 s after T+2 minutes.
-10. Change preview and Run status components follow `brand-guide.md` (status colors, icons, and copy), pass axe-core, and have Storybook-style visual snapshots for: no-op, change, warning, awaiting approval, failed with retry, succeeded.
-11. Docs: `docs/admin/approval-rules.md`, `docs/technician/previews-and-retries.md`, `docs/admin/audit-log.md`.
+10. The change preview renders `+`/`−`/`~` markers in Mono with the right status colors, groups by system then area, shows the summary bar and a count-bearing primary button ("Run 1 change"), and every run/step state uses the icon + word from the 4.9 mapping table. Snapshots on `/dev/components` cover: no-op, add, remove, change, approval required, awaiting approval (approver and requester views), failed with retry, succeeded; all pass axe-core.
+11. The approvals inbox and a pending run's approval banner are fully usable at 320px wide (Playwright mobile viewport).
+12. Docs: `docs/admin/approval-rules.md`, `docs/technician/previews-and-retries.md`, `docs/admin/audit-log.md`.
 
 ---
 
@@ -502,7 +539,7 @@ Branding work is spread through the milestones rather than saved for the end: to
 2. Bulk-adding 50 users to a group uses Graph `$batch` (≤ 3 HTTP requests to FakeGraph for writes) and shows a 50-line preview collapsed to a summary with a "show all" toggle.
 3. Assigning a SKU with zero available seats fails at plan time with "No <friendly SKU name> licenses available (0 of N)".
 4. Assigning a license to a user without usage location adds a "set usage location to <tenant default>" step to the preview automatically.
-5. A TAP is displayed once with a copy button; it is absent from the DB, logs, and audit details (test searches all three for the value).
+5. A TAP is displayed once in the credential display (Mono, `--rc-text-lg`, grouped in fours, Copy button); it is absent from the DB, logs, and audit details (test searches all three for the value).
 6. Removing a user from a distribution list issues `Remove-DistributionGroupMember` through the Exchange runner fake with `-Confirm:$false` and the correct identity.
 7. Exchange runner: when the session dies mid-command, the step retries once on a fresh session and succeeds (fake test); memory of the worker stays under 1 GB with 20 sequential Exchange commands **[measured, recorded]**.
 8. Editing an AD-mastered attribute on a synced user is refused at plan time with the explanatory message.
@@ -567,7 +604,7 @@ Branding work is spread through the milestones rather than saved for the end: to
 2. With FakeGraph/fake Exchange, an immediate offboarding ends with: account disabled, sessions revoked, no MFA methods, mailbox shared, forwarding and auto-reply set as chosen, manager has Full Access, hidden from GAL, no group memberships, no licenses; every removed item is in `undo_data`.
 3. If mailbox conversion fails, licenses are not removed and the run is `PartiallyFailed` with a message explaining why licenses were kept.
 4. A user over 50 GB mailbox or with litigation hold shows the warning in the preview; a user holding a privileged directory role cannot be offboarded by a Technician (403 with explanation) and requires an Admin to confirm.
-5. Approval is required by default; a scheduled offboarding executes at the leave time (injectable clock) and the dashboard lists it as an upcoming leaver.
+5. Approval is required by default; submitting requires the destructive confirmation dialog, and the danger button stays disabled until the exact UPN is typed (E2E); a scheduled offboarding executes at the leave time (injectable clock) and the dashboard lists it as an upcoming leaver.
 6. OneDrive access is granted and a scheduled reversal removes it after N days (time-travel test); the audit log records both.
 7. "Restore user" returns groups and licenses to the pre-offboarding set (snapshot equality, excluding the mailbox type), with its own preview and approval.
 8. Against a live test tenant **[manual, recorded]**: offboard a pilot user end to end; confirm in the Exchange admin center that the mailbox is shared and the license is freed.
@@ -593,7 +630,7 @@ Branding work is spread through the milestones rather than saved for the end: to
 
 **Acceptance criteria**
 
-1. Only Admins can change CA membership; Technicians and Approvers get 403 (authorization test).
+1. Only Admins can change CA membership; Technicians and Approvers get 403 (authorization test). Removing an exclusion goes through the destructive confirmation dialog.
 2. A PATCH to a policy changes only `conditions.users` (FakeGraph asserts the request body contains no other properties).
 3. Each safety rail has a test: removing the last include is refused; removing a break-glass exclusion is refused; excluding from an MFA policy shows the warning.
 4. A temporary exclusion with expiry T is removed automatically within 5 minutes after T (injectable clock); if the user had been excluded permanently by someone else in the meantime, the reversal leaves that permanent exclusion in place and logs why.
@@ -646,7 +683,7 @@ Branding work is spread through the milestones rather than saved for the end: to
 - **Master key rotation** CLI: `install.sh rotate-master-key` re-wraps all data keys.
 - **Data retention** setting for run payloads (default keep forever; audit log is never pruned by the app).
 - **Security review:** run a threat model (STRIDE) over the design and write `docs/security/threat-model.md`; fix findings rated high; dependency scanning (Dependabot, `dotnet list package --vulnerable`, `npm audit`) in CI; container image scanning (Trivy) in CI; run as non-root in `app` and `worker`; read-only root filesystem where possible.
-- **Brand polish pass:** audit every screen against `brand-guide.md` (tokens only, icon set, voice of every string, empty states, error messages), fix gaps, and refresh visual snapshots.
+- **Brand assets and polish** (brand guide §14): generate the 1280x640 GitHub social preview from the SVGs; confirm raster/PWA icons and bundled fonts ship; audit every screen against `brand-guide.md` (tokens only, Lucide icon map, sentence case, voice and word list for every string, empty states, error messages) and refresh visual snapshots.
 
 **Acceptance criteria**
 
@@ -656,7 +693,7 @@ Branding work is spread through the milestones rather than saved for the end: to
 4. Trivy reports no critical or high vulnerabilities with a fix available in shipped images; CI fails if one appears.
 5. `app` and `worker` containers run as a non-root UID (`docker compose exec app id -u` ≠ 0).
 6. The threat model is merged and every high finding is linked to a merged fix or an ADR accepting the risk.
-7. Brand audit checklist from `brand-guide.md` is completed for every route in 4.9 and attached to the PR; no lint violations of the token rule.
+7. A brand audit checklist (tokens, icons, status icon + word, copy voice, word list, empty states, focus ring, dark mode) is completed for every route in 4.9 and attached to the PR; no lint violations of the token rule; all four §14 asset checklist items are ticked in `brand-guide.md`.
 8. Docs: `docs/admin/certificate-rotation.md`, `docs/admin/backups-and-restore.md`, `docs/admin/updating.md`, `docs/admin/health.md`.
 
 ---
@@ -668,7 +705,7 @@ Branding work is spread through the milestones rather than saved for the end: to
 **Tasks**
 
 - Complete the documentation set (spec table): day-1 guide (10 steps), administrator guide, technician guide with screenshots, permissions reference, troubleshooting guide, developer and contributor guide (local dev, architecture, GPLv3 terms, coding standards, "how to add a workflow step" tutorial, release process), release notes.
-- Docs site: build `docs/` with a static site generator under a GPL-compatible license (for example MkDocs with Material, MIT) styled per `brand-guide.md`, published with GitHub Pages; the portal's Help menu links to the version-matched docs.
+- Docs site: build `docs/` with a static site generator under a GPL-compatible license (for example MkDocs with Material, MIT) styled per brand guide §12 (same tokens, self-hosted fonts, logo, and dark mode as the portal; non-affiliation line in the footer), published with GitHub Pages; the portal's Help menu links to the version-matched docs.
 - Day-1 guide steps 09 (backups and a test restore) and 10 (go-live checklist).
 - Release process: semantic versioning, tag `v1.0.0`, GitHub Release with notes, signed images (cosign) on GHCR, installer published at a stable URL, SBOM attached.
 - **Clean-server walkthrough:** someone (human or agent) who has not worked on the code follows the day-1 guide exactly on a fresh VM against a test tenant, records every deviation, and the guide is fixed until a second run has zero deviations.
@@ -676,12 +713,13 @@ Branding work is spread through the milestones rather than saved for the end: to
 **Acceptance criteria**
 
 1. Every document in the spec's documentation table exists under `docs/`, is linked from the docs site navigation, and is linked from the portal Help menu.
-2. Each of the 10 day-1 steps has: the exact command or screen, the expected result, and a "Check it worked" section.
-3. The clean-server walkthrough log is committed under `docs/release/v1.0.0-walkthrough.md` showing a final run with zero deviations, from empty server to a successful test onboarding and offboarding, and a successful restore.
-4. `docs/reference/permissions.md` matches the generated manifest (CI check from M2 green).
-5. Docs site build has zero broken links (link checker in CI).
-6. `v1.0.0` release exists with notes, SBOM, and signed multi-arch images; `install.sh` from the release URL installs exactly v1.0.0.
-7. All prior milestones' acceptance criteria still pass on the release commit (full CI + nightly suite green), and all **[manual]** checks from M2–M9 have been re-run against v1.0.0 and recorded in the walkthrough log.
+2. Each of the 10 day-1 steps has: what you're doing in one sentence, the exact command (Mono, copy button, no prompt character) or screen, the expected result, and a "Check it worked" section.
+3. Screenshots follow brand guide §12: 1440x900, light mode, the fictional "Contoso" tenant, 1px border, Marigold rectangles for highlights; they are captured by a Playwright script so they can be retaken when the UI changes.
+4. The clean-server walkthrough log is committed under `docs/release/v1.0.0-walkthrough.md` showing a final run with zero deviations, from empty server to a successful test onboarding and offboarding, and a successful restore.
+5. `docs/reference/permissions.md` matches the generated manifest (CI check from M2 green).
+6. Docs site build has zero broken links (link checker in CI).
+7. `v1.0.0` release exists with notes, SBOM, and signed multi-arch images; `install.sh` from the release URL installs exactly v1.0.0.
+8. All prior milestones' acceptance criteria still pass on the release commit (full CI + nightly suite green), and all **[manual]** checks from M2–M9 have been re-run against v1.0.0 and recorded in the walkthrough log.
 
 ---
 
@@ -696,7 +734,7 @@ Branding work is spread through the milestones rather than saved for the end: to
 | R5 | A compromised Rollcall host has standing admin rights | Least-privilege manifest with feature toggles, cert private key encrypted at rest, non-root containers, audit hash chain, threat model in M10, docs recommend restricting the app with CA for workload identities where licensed |
 | R6 | Graph throttling during bulk actions | `$batch`, `Retry-After`, worker concurrency limits, bulk previews that warn about large changes |
 | R7 | Testing against real AD in CI is impractical | `IDirectory` abstraction with fakes, contract tests, and a recorded manual lab checklist before each release |
-| R8 | Brand guide changes after UI is built | All visual values in `tokens.css`; components never hard-code values; visual snapshots make changes reviewable |
+| R8 | Brand guide changes after UI is built (colors and fonts may still change) | All visual values come from `docs/brand/tokens.css`; components never hard-code values (lint-enforced); snapshots on `/dev/components` make changes reviewable |
 
 ---
 
