@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[*.cs]
+# Test names read as sentences: Method_does_thing_when_condition.
+dotnet_diagnostic.CA1707.severity = none
