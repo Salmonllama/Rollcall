@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// CI copies this into src/Rollcall.Infrastructure/Persistence/Migrations/ to build an app image
+// whose migration always fails, for the update rollback test. It is never part of a real build.
+
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
+
+namespace Rollcall.Infrastructure.Persistence.Migrations;
+
+[DbContext(typeof(RollcallDbContext))]
+[Migration("29990101000000_CiBrokenMigration")]
+public partial class CiBrokenMigration : Migration
+{
+    protected override void Up(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.Sql("CREATE TABLE ci_half_applied (id int);");
+        migrationBuilder.Sql("DO $$ BEGIN RAISE EXCEPTION 'Deliberately broken migration for the update rollback test'; END $$;");
+    }
+}
