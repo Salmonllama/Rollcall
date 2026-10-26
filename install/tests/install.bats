@@ -376,3 +376,67 @@ render_with() {
   [ "$(grep -c '^    ports:' "$TEST_DIR/docker-compose.yml")" -eq 1 ]
   ! grep -q '5432:' "$TEST_DIR/docker-compose.yml"
 }
+
+# --- Update, backup, restore, uninstall --------------------------------------------------------
+
+@test "destructive commands need --yes when there is no terminal" {
+  load_installer
+  COMMAND=uninstall
+  run confirm "This deletes everything." </dev/null
+  if { : </dev/tty; } 2>/dev/null; then skip "a terminal is attached"; fi
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"uninstall needs confirmation, but there's no terminal to ask on."* ]]
+  [[ "$output" == *"--yes"* ]]
+}
+
+@test "confirm passes with --yes" {
+  load_installer
+  OPT_YES=1
+  run confirm "This deletes everything."
+  [ "$status" -eq 0 ]
+}
+
+@test "restore rejects a file that isn't a Rollcall backup" {
+  load_installer
+  INSTALL_DIR="$ROLLCALL_DIR"
+  require_root() { :; }
+  touch "$ROLLCALL_DIR/.installed"
+  echo "not a tarball" >"$TEST_DIR/backup.tar.gz"
+  ARG="$TEST_DIR/backup.tar.gz"
+  run cmd_restore
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"isn't a Rollcall backup."* ]]
+}
+
+@test "restore reports a missing archive" {
+  load_installer
+  INSTALL_DIR="$ROLLCALL_DIR"
+  require_root() { :; }
+  touch "$ROLLCALL_DIR/.installed"
+  ARG="$TEST_DIR/missing.tar.gz"
+  run cmd_restore
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Couldn't read the backup archive"* ]]
+}
+
+@test "backups go outside the install directory so uninstall --purge keeps them" {
+  load_installer
+  unset ROLLCALL_BACKUP_DIR
+  [ "$(backup_dir)" = /var/backups/rollcall ]
+  OPT_OUTPUT=/srv/backups
+  [ "$(backup_dir)" = /srv/backups ]
+}
+
+@test "commands other than install need a finished install" {
+  load_installer
+  INSTALL_DIR="$ROLLCALL_DIR"
+  run require_installed
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Rollcall isn't installed in $ROLLCALL_DIR."* ]]
+}
+
+@test "the version of a downloaded installer is read from its source" {
+  load_installer
+  printf '#!/usr/bin/env bash\nROLLCALL_VERSION="1.4.0"\n' >"$TEST_DIR/latest.sh"
+  [ "$(installer_version "$TEST_DIR/latest.sh")" = 1.4.0 ]
+}
