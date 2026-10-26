@@ -22,5 +22,7 @@ WORKDIR /app
 COPY --from=build /app ./
 ENV ASPNETCORE_HTTP_PORTS=8080
 EXPOSE 8080
+# Mount point for the rollcall-config volume; owned by the app user so a new volume is writable.
+RUN mkdir -p /var/lib/rollcall && chown "$APP_UID" /var/lib/rollcall
 USER $APP_UID
 ENTRYPOINT ["dotnet", "Rollcall.Api.dll"]
