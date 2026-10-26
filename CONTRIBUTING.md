@@ -10,7 +10,7 @@ Thanks for helping. Rollcall manages identities in real Microsoft 365 tenants, s
 
 ## Build and test
 
-You need the .NET 10 SDK and Node.js 22 or later.
+You need the .NET 10 SDK, Node.js 22 or later, and Docker. The .NET integration tests start a throwaway PostgreSQL 17 container with [Testcontainers](https://dotnet.testcontainers.org/).
 
 ```bash
 dotnet build src/Rollcall.sln
@@ -36,6 +36,17 @@ scripts/check-nuget-licenses.sh
 node scripts/check-npm-licenses.mjs
 shellcheck scripts/*.sh
 ```
+
+### Database migrations
+
+The schema lives in `src/Rollcall.Infrastructure/Persistence/Migrations/`. To add a migration:
+
+```bash
+dotnet tool install --global dotnet-ef
+dotnet ef migrations add <Name> --project src/Rollcall.Infrastructure --output-dir Persistence/Migrations
+```
+
+Add the SPDX header to the top of each generated file. The app applies pending migrations on startup, holding a PostgreSQL advisory lock so two app containers never migrate at once.
 
 ## Rules for every pull request
 
