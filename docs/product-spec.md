@@ -1,6 +1,6 @@
 # Rollcall: Product Overview
 
-Last updated: Oct 21, 2026
+Last updated: Oct 26, 2026
 
 **Rollcall is a free, open-source (GPLv3), self-hosted portal that turns Microsoft 365 onboarding and offboarding into a few reviewed clicks. Small IT teams manage groups, licenses, Conditional Access, user attributes, MFA, and hybrid on-prem AD from one login, installed with a single command.**
 
@@ -187,7 +187,7 @@ Full documentation and step-by-step day-1 deployment guides are a v1 release req
 | Technician guide | IT technician | Onboarding, offboarding, and each management feature, with screenshots |
 | Permissions reference | Admin, security reviewer | Every Graph permission and directory role, which feature needs it, and what turning a feature off removes |
 | Troubleshooting guide | Admin, technician | Common errors (consent, certificate, sync delay, agent offline) with fixes |
-| Developer and contributor guide | Open-source contributors | Local dev setup, architecture, GPLv3 licensing and contribution terms, coding standards, how to add a workflow step, release process |
+| Developer and contributor guide | Open-source contributors | Local dev setup, architecture, GPLv3 licensing, the contributor license agreement (CLA) and contribution terms, coding standards, how to add a workflow step, release process |
 | Release notes | Everyone | Changes, upgrade steps, and breaking changes per version |
 
 ### Day-1 deployment guide steps
@@ -209,13 +209,13 @@ Each step should be testable by someone who has never seen the product. Develope
 
 ## Scope and open questions
 
-Version 1 covers identity lifecycle for one M365 tenant per install, plus on-prem AD users, groups, and the OUs they sit in. Device management, HR-system integration, and Exchange on-prem are out of scope for now. The product is free and open source under the GNU General Public License v3 (GPLv3); optional paid support or a limited hosted offering may follow later. The repository ships a LICENSE file, and every bundled dependency and container image must have a GPLv3-compatible license.
+Version 1 covers identity lifecycle for one M365 tenant per install, plus on-prem AD users, groups, and the OUs they sit in. Device management, HR-system integration, and Exchange on-prem are out of scope for now. The core product is free and open source under the GNU General Public License v3 (GPLv3) and keeps the v1 scope for small internal IT teams. Rollcall follows an open-core model: paid MSP and multitenant editions may follow later, built on the same core. Contributors sign a contributor license agreement (CLA) so the project can offer those editions. The repository ships a LICENSE file, and every bundled dependency and container image must have a GPLv3-compatible license.
 
 **Not in version 1**
 
 - Intune device wipe or enrollment
 - Automatic triggers from an HR system (Workday, BambooHR, and similar)
-- Multi-tenant management (a second tenant needs a second install)
+- Multi-tenant management (a second tenant needs a second install); planned as a paid MSP edition
 - Exchange on-prem (Exchange Server) management
 - A hosted SaaS version
 
@@ -224,6 +224,6 @@ Version 1 covers identity lifecycle for one M365 tenant per install, plus on-pre
 - [x] What is the product name? Rollcall.
 - [x] Who is this document for? Developers, as the spec for an implementation plan.
 - [x] How does the portal authenticate to M365? Entra app registration with a certificate only; no client secrets and no stored admin credentials.
-- [x] Is this a commercial product, open source, or an internal tool for one organization? A free, open-source product licensed under GPLv3. Optional paid support or limited SaaS offerings may follow later.
+- [x] Is this a commercial product, open source, or an internal tool for one organization? Open core. The core is free and open source under GPLv3 and ships v1 for small teams; MSP and multitenant editions will be paid (decided Oct 26, 2026).
 - [x] Should a single install manage one tenant only, or several? One install manages one tenant. Multitenancy is not built in; a second tenant means a second install.
 - [x] Which on-prem actions matter most for hybrid? Managing AD users, groups, and the OUs they sit in is in scope; Exchange on-prem is out of scope.
