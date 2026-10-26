@@ -1,0 +1,118 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Publishes the app and worker images to GHCR: "edge" from every push to main, and the
+# version number from every v* tag. A tag also creates a GitHub release whose install.sh is
+# pinned to that version, so the installer URL in the docs always installs matching images:
+#   https://github.com/Salmonllama/Rollcall/releases/latest/download/install.sh
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Work out the version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "$REF_TYPE" == tag ]]; then
+            version="${REF_NAME#v}"
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "✕ Tag $REF_NAME isn't a version like v1.2.3 or v1.2.3-rc.1."
+              exit 1
+            fi
+          else
+            version=edge
+          fi
+          prerelease=false
+          [[ "$version" == *-* ]] && prerelease=true
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "✓ Publishing version $version."
+
+  images:
+    name: Publish ${{ matrix.image.name }} image
+    needs: version
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image:
+          - { name: rollcall-app, dockerfile: src/Rollcall.Api/Dockerfile, cache: Api }
+          - { name: rollcall-worker, dockerfile: src/Rollcall.Worker/Dockerfile, cache: Worker }
+    steps:
+      - uses: actions/checkout@v5
+      # Only the small final stage runs under emulation; the .NET build cross-compiles.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/salmonllama/${{ matrix.image.name }}
+          tags: |
+            type=raw,value=${{ needs.version.outputs.version }}
+            type=sha,format=short
+          labels: |
+            org.opencontainers.image.title=${{ matrix.image.name }}
+            org.opencontainers.image.licenses=GPL-3.0-or-later
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.image.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image.cache }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.cache }}
+
+  release:
+    name: Create the GitHub release
+    if: github.ref_type == 'tag'
+    needs: [version, images]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Pin install.sh to ${{ needs.version.outputs.version }}
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir dist
+          sed "s/^ROLLCALL_VERSION=\"edge\"$/ROLLCALL_VERSION=\"$VERSION\"/" install/install.sh > dist/install.sh
+          grep -qx "ROLLCALL_VERSION=\"$VERSION\"" dist/install.sh || { echo "✕ Couldn't pin the version in install.sh."; exit 1; }
+          cp install/docker-compose.yml.tmpl install/Caddyfile.tmpl dist/
+          (cd dist && sha256sum install.sh docker-compose.yml.tmpl Caddyfile.tmpl > SHA256SUMS)
+          cat dist/SHA256SUMS
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          flags=(--verify-tag --title "Rollcall $TAG" --generate-notes)
+          [[ "$PRERELEASE" == true ]] && flags+=(--prerelease)
+          gh release create "$TAG" dist/* "${flags[@]}"
