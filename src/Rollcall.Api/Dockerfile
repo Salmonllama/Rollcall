@@ -6,6 +6,8 @@ WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
+# The page imports its logo and favicon from docs/brand (../docs/brand relative to /web).
+COPY docs/brand/ /docs/brand/
 RUN npm run build
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
@@ -20,5 +22,7 @@ WORKDIR /app
 COPY --from=build /app ./
 ENV ASPNETCORE_HTTP_PORTS=8080
 EXPOSE 8080
+# Mount point for the rollcall-config volume; owned by the app user so a new volume is writable.
+RUN mkdir -p /var/lib/rollcall && chown "$APP_UID" /var/lib/rollcall
 USER $APP_UID
 ENTRYPOINT ["dotnet", "Rollcall.Api.dll"]
