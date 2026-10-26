@@ -1,0 +1,8 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="../Rollcall.Infrastructure/Rollcall.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

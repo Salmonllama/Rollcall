@@ -1,0 +1,7 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="../Rollcall.Contracts/Rollcall.Contracts.csproj" />
+  </ItemGroup>
+</Project>

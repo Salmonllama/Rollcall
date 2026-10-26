@@ -1,0 +1,19 @@
+# .NET
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+
+# Web
+node_modules/
+web/dist/
+web/coverage/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+
+# Spike output (private keys)
+spikes/out/
