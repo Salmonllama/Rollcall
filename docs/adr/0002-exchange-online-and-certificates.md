@@ -19,17 +19,17 @@ To be recorded from `spikes/` runs:
 
 | Measure | RSA 3072 | ECDSA P-256 |
 | --- | --- | --- |
-| Certificate accepted by the app registration upload | | |
-| Graph app-only token (client assertion) | | |
-| `Connect-ExchangeOnline` succeeds | | |
-| Session start time (s) | | |
-| Worker memory after connect (MB) | | |
-| Memory after `Get-Mailbox` and `Set-Mailbox -Type Shared` (MB) | | |
-| Time until `RecipientTypeDetails = SharedMailbox` (s) | | |
+| Certificate accepted by the app registration upload | y | y |
+| Graph app-only token (client assertion) | y | y |
+| `Connect-ExchangeOnline` succeeds | n | y |
+| Session start time (s) | 2.1 | n/a |
+| Worker memory after connect (MB) | 344 | n/a |
+| Memory after `Get-Mailbox` and `Set-Mailbox -Type Shared` (MB) | 368 | n/a |
+| Time until `RecipientTypeDetails = SharedMailbox` (s) | 16.6 | n/a |
 
-- `ExchangeOnlineManagement` version tested:
-- Module download time and module tree SHA-256:
-- Certificate loaded with `EphemeralKeySet`, no key file written to disk: yes / no
+- `ExchangeOnlineManagement` version tested: 3.10.1
+- Module download time and module tree SHA-256: 18B5D4B687DD0CC8BDA65310B344194F097BE0DD7441934D0C127344DFF77A34
+- Certificate loaded with `EphemeralKeySet`, no key file written to disk: yes
 
 ## Decision
 
@@ -38,6 +38,7 @@ To be written from the results. The expected decision, if the spikes succeed, is
 - The worker obtains `ExchangeOnlineManagement` from the PowerShell Gallery at first start, pinned to the version above and verified against the recorded hash, and caches it in a volume. The module is not redistributed in Rollcall images.
 - The worker hosts PowerShell in-process (`Microsoft.PowerShell.SDK`) and passes the certificate as an in-memory `X509Certificate2`.
 - The app certificate algorithm is ECDSA P-256 if both Graph and Exchange Online accept it, otherwise RSA 3072.
+- Certificates must stay RSA 3072. ECDSA not accepted by ExchangeOnline Module.
 
 ## Consequences
 
