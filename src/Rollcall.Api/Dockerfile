@@ -6,6 +6,8 @@ WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
+# The page imports its logo and favicon from docs/brand (../docs/brand relative to /web).
+COPY docs/brand/ /docs/brand/
 RUN npm run build
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build

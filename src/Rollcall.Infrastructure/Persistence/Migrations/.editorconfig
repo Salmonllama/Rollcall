@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# EF Core generates these files; analyzers treat them as generated code.
+[*.cs]
+generated_code = true

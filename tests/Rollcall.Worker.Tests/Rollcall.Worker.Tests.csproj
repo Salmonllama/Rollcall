@@ -6,9 +6,11 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../Rollcall.TestSupport/Rollcall.TestSupport.csproj" />
     <ProjectReference Include="../../src/Rollcall.Worker/Rollcall.Worker.csproj" />
   </ItemGroup>
 
