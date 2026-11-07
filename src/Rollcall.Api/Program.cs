@@ -29,7 +29,13 @@ await using (var scope = app.Services.CreateAsyncScope())
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
+// Liveness: answers once the process has started and migrated, and fails if it crashes or
+// hangs. It deliberately checks no dependencies. Compose starts the worker only after this
+// passes, and the worker's heartbeat is part of /readyz, so checking readiness here would
+// deadlock startup. Dependency state belongs in /readyz.
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" }));
+
+// Readiness: database reachable, migrations current, and a worker heartbeat in the last 45 s.
 
 app.MapGet("/readyz", async (ReadinessProbe probe, CancellationToken cancellationToken) =>
 {
