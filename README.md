@@ -8,7 +8,7 @@ Every change is previewed before it runs, sensitive changes can require a second
 
 ## Status
 
-Rollcall is in early development and is not ready to install. The repository currently holds the foundations (milestone M0): the solution layout, CI, and licensing checks. Progress follows the milestones in the [implementation plan](docs/implementation-plan.md).
+Rollcall is in early development and is not ready for production. The one-command installer works (milestone M1): it brings up the full stack over HTTPS, with update, backup, and restore. The setup wizard and sign-in come next. Progress follows the milestones in the [implementation plan](docs/implementation-plan.md), and the [day-1 deployment guide](docs/day-1/README.md) grows with each milestone.
 
 ## Documentation
 
