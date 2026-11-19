@@ -408,10 +408,16 @@ render_with() {
   [ "$(installer_file_url install.sh)" = "https://raw.githubusercontent.com/Salmonllama/Rollcall/main/install/install.sh" ]
 }
 
-@test "readyz_json preserves the JSON body on HTTP 503" {
+@test "readyz_json falls back to nc to preserve the JSON body on HTTP 503" {
   load_installer
+  local mock_bin="$TEST_DIR/bin"
+  mkdir -p "$mock_bin"
+  printf '#!/usr/bin/env sh\nexit 1\n' >"$mock_bin/wget"
+  printf '#!/usr/bin/env sh\nprintf "HTTP/1.0 503 Service Unavailable\\r\\nContent-Type: application/json\\r\\n\\r\\n{\\"db\\":\\"ok\\",\\"migrations\\":\\"current\\",\\"worker\\":\\"stale\\"}"\n' >"$mock_bin/nc"
+  chmod +x "$mock_bin/wget" "$mock_bin/nc"
   compose() {
-    printf 'HTTP/1.0 503 Service Unavailable\r\nContent-Type: application/json\r\n\r\n{"db":"ok","migrations":"current","worker":"stale"}'
+    shift 3 # exec -T proxy
+    PATH="$mock_bin:$PATH" "$@"
   }
   run readyz_json
   [ "$status" -eq 0 ]
