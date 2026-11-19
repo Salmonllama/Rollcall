@@ -13,9 +13,11 @@ var builder = Host.CreateApplicationBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddJsonConsole();
 builder.Services.AddRollcallDatabase();
+builder.Services.AddRollcallCoreServices();
 builder.Services.AddHostedService<HeartbeatService>();
+builder.Services.AddHostedService<WorkflowWorkerService>();
+builder.Services.AddHostedService<SchedulerBackgroundService>();
 
-// The job queue, schedules, and workflow steps arrive in M3.
 using var host = builder.Build();
 await host.RunAsync();
 return 0;

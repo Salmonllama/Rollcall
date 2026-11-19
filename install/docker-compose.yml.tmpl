@@ -7,6 +7,8 @@ services:
   proxy:
     image: caddy:2
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "80:80"
       - "443:443"
@@ -30,6 +32,8 @@ services:
   app:
     image: {{IMAGE_PREFIX}}/rollcall-app:{{VERSION}}
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     env_file: .env
     environment:
       ConnectionStrings__Rollcall: "Host=db;Database=rollcall;Username=rollcall;Password=${POSTGRES_PASSWORD}"
@@ -51,9 +55,13 @@ services:
   worker:
     image: {{IMAGE_PREFIX}}/rollcall-worker:{{VERSION}}
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     env_file: .env
     environment:
       ConnectionStrings__Rollcall: "Host=db;Database=rollcall;Username=rollcall;Password=${POSTGRES_PASSWORD}"
+    volumes:
+      - rollcall-config:/var/lib/rollcall
     depends_on:
       app:
         condition: service_healthy
@@ -70,6 +78,8 @@ services:
   db:
     image: postgres:17
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_USER: rollcall
       POSTGRES_DB: rollcall

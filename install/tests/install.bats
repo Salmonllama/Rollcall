@@ -552,3 +552,43 @@ render_with() {
   grep -q 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;' "$calls"
   grep -q 'pg_restore' "$calls"
 }
+
+@test "admin-reset delegates to Rollcall.Api.dll admin-reset inside the app container" {
+  load_installer
+  INSTALL_DIR="$ROLLCALL_DIR"
+  require_root() { :; }
+  touch "$ROLLCALL_DIR/.installed"
+  local calls="$TEST_DIR/compose.calls"
+  compose() {
+    printf '%s\n' "$*" >>"$calls"
+  }
+  ARG="admin@contoso.com"
+  run cmd_admin_reset
+  [ "$status" -eq 0 ]
+  grep -q 'exec -T app dotnet Rollcall.Api.dll admin-reset admin@contoso.com' "$calls"
+  [[ "$output" == *"admin@contoso.com now has the Admin role."* ]]
+}
+
+@test "rotate-master-key backs up, re-wraps, updates .env, and restarts the stack" {
+  load_installer
+  INSTALL_DIR="$ROLLCALL_DIR"
+  OPT_YES=1
+  require_root() { :; }
+  create_backup() { BACKUP_PATH="$TEST_DIR/pre-rotate.tar.gz"; }
+  wait_for_ready() { :; }
+  local calls="$TEST_DIR/compose.calls"
+  compose() {
+    printf '%s\n' "$*" >>"$calls"
+  }
+  touch "$ROLLCALL_DIR/.installed"
+  printf 'ROLLCALL_HOSTNAME=rc.test\nROLLCALL_MASTER_KEY=old-key-placeholder\n' >"$ROLLCALL_DIR/.env"
+
+  run cmd_rotate_master_key
+  [ "$status" -eq 0 ]
+  grep -q 'app dotnet Rollcall.Api.dll rotate-master-key' "$calls"
+  grep -q 'up --detach --force-recreate --wait --wait-timeout 300 app worker' "$calls"
+  local updated_key
+  updated_key="$(env_value ROLLCALL_MASTER_KEY)"
+  [ "$updated_key" != "old-key-placeholder" ]
+  [ "$(printf '%s' "$updated_key" | base64 -d | wc -c)" -eq 32 ]
+}

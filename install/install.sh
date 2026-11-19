@@ -72,7 +72,7 @@ fail() {
 # usage_error <message> prints the problem and how to get help, then exits 2.
 usage_error() {
   printf '%s✕%s %s\n' "$RED" "$RESET" "$1" >&2
-  if [[ "$COMMAND" =~ ^(install|update|backup|restore|status|logs|admin-reset|uninstall)$ ]]; then
+  if [[ "$COMMAND" =~ ^(install|update|backup|restore|status|logs|admin-reset|rotate-master-key|uninstall)$ ]]; then
     printf '  Next: run "install.sh %s --help" to see the options.\n' "$COMMAND" >&2
   else
     printf '  Next: run "install.sh help" to see the commands.\n' >&2
@@ -107,7 +107,8 @@ Commands:
   restore <archive>   Restore a backup archive
   status              Show the state of each service
   logs [service]      Show recent logs from the stack, or from one service
-  admin-reset <upn>   Give a user the Admin role again (available once sign-in exists)
+  admin-reset <upn>   Give a user the Admin role again
+  rotate-master-key   Re-wrap encrypted data with a new master key
   uninstall           Remove Rollcall, keeping data unless you add --purge
   help                Show this help
 
@@ -205,9 +206,21 @@ help_admin_reset() {
 Usage: install.sh admin-reset <upn>
 
 Gives the user with this UPN the Admin role again, for when no one can manage roles.
-Available once portal sign-in exists.
 
 Options:
+  -h, --help   Show this help
+EOF
+}
+
+help_rotate_master_key() {
+  cat <<'EOF'
+Usage: install.sh rotate-master-key [options]
+
+Takes a backup, generates a new 256-bit master key, re-wraps all encrypted secrets in
+the database, updates .env, and restarts Rollcall.
+
+Options:
+  -y, --yes    Don't ask for confirmation
   -h, --help   Show this help
 EOF
 }
@@ -235,6 +248,7 @@ show_help() {
     status) help_status ;;
     logs) help_logs ;;
     admin-reset) help_admin_reset ;;
+    rotate-master-key) help_rotate_master_key ;;
     uninstall) help_uninstall ;;
     *) help_main ;;
   esac
@@ -248,7 +262,7 @@ show_help() {
 allowed_options() {
   case "$1" in
     install) echo "--hostname --tls --email --cert --key --yes" ;;
-    update | restore) echo "--yes" ;;
+    update | restore | rotate-master-key) echo "--yes" ;;
     backup) echo "--output" ;;
     logs) echo "--follow" ;;
     uninstall) echo "--purge --yes" ;;
@@ -261,7 +275,7 @@ parse_args() {
 
   if [[ $# -gt 0 ]]; then
     case "$1" in
-      install | update | backup | restore | status | logs | admin-reset | uninstall)
+      install | update | backup | restore | status | logs | admin-reset | rotate-master-key | uninstall)
         COMMAND="$1"
         shift
         ;;
@@ -1172,6 +1186,7 @@ main() {
     status) cmd_status ;;
     logs) cmd_logs ;;
     admin-reset) cmd_admin_reset ;;
+    rotate-master-key) cmd_rotate_master_key ;;
     update) cmd_update ;;
     backup) cmd_backup ;;
     restore) cmd_restore ;;

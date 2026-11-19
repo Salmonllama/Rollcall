@@ -368,7 +368,7 @@ The install script is the first thing an admin sees, so it follows the same voic
 
 - [x] Logo lockups, mark, mono mark, favicon (SVG): `docs/brand/`
 - [x] Design tokens: `docs/brand/tokens.css`
-- [ ] Raster exports and PWA manifest icons, generated at build time
-- [ ] GitHub social preview image (1280x640)
-- [ ] Bundled font files in the web app
-- [ ] Component library implementing section 8, with a reference page in the dev build
+- [x] Raster exports and PWA manifest icons, generated at build time (`web/scripts/generate-brand-assets.mjs` -> `web/public/`)
+- [x] GitHub social preview image (1280x640): `docs/brand/social-preview.png`
+- [x] Bundled font files in the web app (`@fontsource/atkinson-hyperlegible-next`, `@fontsource/atkinson-hyperlegible-mono`)
+- [x] Component library implementing section 8, with a reference page in the dev build (`/dev/components`)

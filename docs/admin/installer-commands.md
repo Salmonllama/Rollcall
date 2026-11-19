@@ -52,6 +52,24 @@ Downloads the latest installer, takes a backup, then starts the new version, whi
 
 If the new version doesn't start, for example because a database migration failed, the update puts the previous version and its database back, starts it again, and prints the backup path. Nothing is lost. Send the output of `install.sh logs app` with your bug report.
 
+## Restore Admin access
+
+```bash
+sudo bash /opt/rollcall/install.sh admin-reset alex.chen@contoso.com
+```
+
+Gives the user with that UPN the Admin role again if no current admin can sign in. Rollcall records the change in the audit log under `host-shell@rollcall`. The user must sign out and sign back in for the new role to apply.
+
+## Rotate the master key
+
+```bash
+sudo bash /opt/rollcall/install.sh rotate-master-key
+```
+
+Takes a backup, generates a new 256-bit `ROLLCALL_MASTER_KEY`, re-wraps every encrypted secret in PostgreSQL (app certificates and private keys) using AES-256-GCM envelope encryption, writes the new key to `/opt/rollcall/.env`, and restarts `app` and `worker`.
+
+> **Warning:** After rotating the master key, take a fresh off-host backup. Older backup archives remain decryptable only with the `.env` inside those archives.
+
 ## Uninstall
 
 ```bash
@@ -68,4 +86,4 @@ Also deletes the database, the secrets, and `/opt/rollcall`. Backups in `/var/ba
 
 > **Danger:** `--purge` can't be undone. Take a backup first if you might need the data.
 
-`update`, `restore`, and `uninstall` ask you to type `yes` first. Add `--yes` to skip the question in scripts.
+`update`, `restore`, `rotate-master-key`, and `uninstall` ask you to type `yes` first. Add `--yes` to skip the question in scripts.
