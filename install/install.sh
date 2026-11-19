@@ -746,17 +746,17 @@ start_stack() {
 }
 
 # readyz_json prints the app's /readyz body, fetched from inside the proxy container so it
-# works before DNS or the certificate is in place. BusyBox wget discards the body on HTTP 503,
-# so prefer a plain HTTP/1.0 probe over nc to keep the diagnostic JSON when not ready.
+# works before DNS or the certificate is in place. BusyBox wget returns the body on HTTP 200
+# but discards it on HTTP 503, so fall back to an HTTP/1.0 probe over nc to keep the diagnostic
+# JSON when a dependency isn't ready.
 readyz_json() {
   compose exec -T proxy sh -c '
-    if command -v nc >/dev/null 2>&1; then
-      printf "GET /readyz HTTP/1.0\r\nHost: app\r\n\r\n" | nc -w 5 app 8080
-    else
-      printf "\r\n"
-      wget -q -T 5 -O - http://app:8080/readyz
-    fi
-  ' 2>/dev/null | tr -d '\r' | sed '1,/^$/d'
+    wget -q -T 5 -O - http://app:8080/readyz 2>/dev/null || {
+      if command -v nc >/dev/null 2>&1; then
+        (printf "GET /readyz HTTP/1.0\r\nHost: app\r\n\r\n"; sleep 1) | nc -w 5 app 8080 2>/dev/null | tr -d "\r" | sed "1,/^$/d"
+      fi
+    }
+  ' 2>/dev/null
 }
 
 wait_for_ready() {
