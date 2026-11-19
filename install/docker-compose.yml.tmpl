@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Rendered by install.sh into /opt/rollcall/docker-compose.yml. Edits there are overwritten
+# by "install.sh update"; change this template instead.
+name: rollcall
+
+services:
+  proxy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./tls:/etc/rollcall/tls:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      # Caddy's admin API listens on localhost inside the container only.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks: [edge]
+
+  app:
+    image: {{IMAGE_PREFIX}}/rollcall-app:{{VERSION}}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ConnectionStrings__Rollcall: "Host=db;Database=rollcall;Username=rollcall;Password=${POSTGRES_PASSWORD}"
+    volumes:
+      - rollcall-config:/var/lib/rollcall
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # Answers only after migrations finish, so "healthy" also means the schema is current.
+      test: ["CMD", "dotnet", "Rollcall.Api.dll", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+      start_interval: 2s
+    networks: [edge, backend]
+
+  worker:
+    image: {{IMAGE_PREFIX}}/rollcall-worker:{{VERSION}}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ConnectionStrings__Rollcall: "Host=db;Database=rollcall;Username=rollcall;Password=${POSTGRES_PASSWORD}"
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "dotnet", "Rollcall.Worker.dll", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 2s
+    # The worker calls Microsoft Graph and Exchange Online, so it needs the outbound network.
+    networks: [edge, backend]
+
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rollcall
+      POSTGRES_DB: rollcall
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "rollcall", "-d", "rollcall"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+      start_interval: 2s
+    # No ports: the database is reachable only from app and worker on the internal network.
+    networks: [backend]
+
+networks:
+  edge: {}
+  backend:
+    internal: true
+
+volumes:
+  db-data: {}
+  caddy-data: {}
+  caddy-config: {}
+  rollcall-config: {}

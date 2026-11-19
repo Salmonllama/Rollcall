@@ -6,6 +6,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Rollcall.Worker.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../Rollcall.Infrastructure/Rollcall.Infrastructure.csproj" />
   </ItemGroup>
 

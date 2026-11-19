@@ -102,6 +102,137 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
+  installer-unit:
+    name: Installer tests (bats)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update && sudo apt-get install -y bats
+      - run: bats install/tests/install.bats
+
+  installer-e2e:
+    name: Install end to end (${{ matrix.tls }} TLS)
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        tls: [custom, internal]
+    services:
+      # Stands in for GHCR, so the installer pulls the images built from this commit.
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+      - name: Build and push the app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Rollcall.Api/Dockerfile
+          push: true
+          tags: localhost:5000/rollcall-app:edge
+          cache-from: type=gha,scope=Api
+      - name: Build and push the worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Rollcall.Worker/Dockerfile
+          push: true
+          tags: localhost:5000/rollcall-worker:edge
+          cache-from: type=gha,scope=Worker
+      - name: Create a test certificate for rc.test
+        if: matrix.tls == 'custom'
+        working-directory: ${{ runner.temp }}
+        run: |
+          openssl req -x509 -newkey rsa:3072 -nodes -days 7 -subj /CN=rc.test \
+            -addext subjectAltName=DNS:rc.test -keyout k.pem -out c.pem
+          echo "CURL_CA_BUNDLE=$RUNNER_TEMP/c.pem" >> "$GITHUB_ENV"
+      - name: Install (acceptance criterion 1)
+        run: |
+          args=(--hostname rc.test --tls "${{ matrix.tls }}" --yes)
+          if [[ "${{ matrix.tls }}" == custom ]]; then
+            args+=(--cert "$RUNNER_TEMP/c.pem" --key "$RUNNER_TEMP/k.pem")
+          fi
+          start=$SECONDS
+          sudo ROLLCALL_IMAGE_PREFIX=localhost:5000 bash install/install.sh "${args[@]}" | tee "$RUNNER_TEMP/install.out"
+          echo "Install took $((SECONDS - start)) seconds."
+          grep -q '^https://rc.test$' "$RUNNER_TEMP/install.out"
+          grep -q 'Setup token: [A-Z2-7]\{39\}$' "$RUNNER_TEMP/install.out"
+      - name: Check the running stack (criteria 2, 3, and 5)
+        run: sudo --preserve-env=CURL_CA_BUNDLE install/tests/stack-smoke.sh /opt/rollcall rc.test
+      - name: Check .env and a second install (criterion 4)
+        run: |
+          [[ "$(sudo stat -c '%a %U' /opt/rollcall/.env)" == "600 root" ]]
+          before="$(sudo sha256sum /opt/rollcall/.env)"
+          sudo bash install/install.sh --hostname rc.test --tls internal --yes | tee "$RUNNER_TEMP/rerun.out"
+          grep -q 'already installed' "$RUNNER_TEMP/rerun.out"
+          grep -q 'install.sh update' "$RUNNER_TEMP/rerun.out"
+          [[ "$(sudo sha256sum /opt/rollcall/.env)" == "$before" ]]
+      - name: Show the install log and container logs
+        if: failure()
+        run: |
+          sudo cat /var/log/rollcall-install.log || true
+          sudo docker compose --project-directory /opt/rollcall ps --all || true
+          sudo docker compose --project-directory /opt/rollcall logs --no-color || true
+
+  installer-lifecycle:
+    name: Backup, restore, and update end to end
+    runs-on: ubuntu-24.04
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    env:
+      ROLLCALL_IMAGE_PREFIX: localhost:5000
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+      - name: Build and push the app image (edge and next)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Rollcall.Api/Dockerfile
+          push: true
+          tags: localhost:5000/rollcall-app:edge,localhost:5000/rollcall-app:next
+          cache-from: type=gha,scope=Api
+      - name: Build and push the worker image (edge, next, and broken)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Rollcall.Worker/Dockerfile
+          push: true
+          tags: localhost:5000/rollcall-worker:edge,localhost:5000/rollcall-worker:next,localhost:5000/rollcall-worker:broken
+          cache-from: type=gha,scope=Worker
+      - name: Add a deliberately broken migration
+        run: cp install/tests/fixtures/BrokenMigration.cs.txt src/Rollcall.Infrastructure/Persistence/Migrations/CiBrokenMigration.cs
+      - name: Build and push the broken app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Rollcall.Api/Dockerfile
+          push: true
+          tags: localhost:5000/rollcall-app:broken
+          cache-from: type=gha,scope=Api
+      - name: Install
+        run: sudo --preserve-env=ROLLCALL_IMAGE_PREFIX bash install/install.sh --hostname rc.test --tls internal --yes
+      - name: Backup, purge, reinstall, and restore (criterion 6)
+        run: sudo --preserve-env=ROLLCALL_IMAGE_PREFIX install/tests/lifecycle-e2e.sh backup-restore rc.test
+      - name: Failed update rolls back, then a good update succeeds (criterion 7)
+        run: sudo --preserve-env=ROLLCALL_IMAGE_PREFIX install/tests/lifecycle-e2e.sh update rc.test next broken
+      - name: Show the install log and container logs
+        if: failure()
+        run: |
+          sudo cat /var/log/rollcall-install.log || true
+          sudo docker compose --project-directory /opt/rollcall ps --all || true
+          sudo docker compose --project-directory /opt/rollcall logs --no-color || true
+
   dco:
     name: DCO sign-off
     if: github.event_name == 'pull_request'
@@ -119,7 +250,7 @@ jobs:
   ci-passed:
     name: CI passed
     if: always()
-    needs: [dotnet, web, licenses, headers, images, dco]
+    needs: [dotnet, web, licenses, headers, images, installer-unit, installer-e2e, installer-lifecycle, dco]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every job to succeed (DCO may be skipped on pushes)
