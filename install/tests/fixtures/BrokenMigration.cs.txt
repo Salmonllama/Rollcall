@@ -13,7 +13,9 @@ public partial class CiBrokenMigration : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
     {
-        migrationBuilder.Sql("CREATE TABLE ci_half_applied (id int);");
+        // Commit the new table before throwing so the rollback test proves restore_database
+        // removes objects added by a partially-applied update, not only Postgres's own rollback.
+        migrationBuilder.Sql("CREATE TABLE ci_half_applied (id int);", suppressTransaction: true);
         migrationBuilder.Sql("DO $$ BEGIN RAISE EXCEPTION 'Deliberately broken migration for the update rollback test'; END $$;");
     }
 }

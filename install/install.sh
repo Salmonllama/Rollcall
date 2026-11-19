@@ -423,8 +423,16 @@ script_dir() {
   [[ -n "$source" && -f "$source" ]] && cd "$(dirname "$source")" && pwd
 }
 
-# Where the templates for this version live on GitHub when the installer was piped from curl.
-source_ref() { [[ "$ROLLCALL_VERSION" == edge ]] && echo "main" || echo "v$ROLLCALL_VERSION"; }
+# Where release files for this version live on GitHub when the installer was piped from curl.
+# Tagged releases publish the version-pinned install.sh and templates as release assets;
+# raw.githubusercontent.com at a tag still holds ROLLCALL_VERSION="edge".
+installer_file_url() {
+  if [[ "$ROLLCALL_VERSION" == edge ]]; then
+    printf 'https://raw.githubusercontent.com/%s/main/install/%s' "$REPO_SLUG" "$1"
+  else
+    printf 'https://github.com/%s/releases/download/v%s/%s' "$REPO_SLUG" "$ROLLCALL_VERSION" "$1"
+  fi
+}
 
 # fetch_installer_file <name> <destination> copies a file that ships next to install.sh, or
 # downloads it for this installer's version.
@@ -434,7 +442,7 @@ fetch_installer_file() {
   if [[ -n "$dir" && -f "$dir/$1" ]]; then
     cp "$dir/$1" "$2"
   else
-    logged curl -fsSL --retry 3 -o "$2" "https://raw.githubusercontent.com/$REPO_SLUG/$(source_ref)/install/$1"
+    logged curl -fsSL --retry 3 -o "$2" "$(installer_file_url "$1")"
   fi
 }
 
@@ -606,10 +614,10 @@ check_certificate() {
 
   openssl x509 -in "$OPT_CERT" -noout 2>/dev/null || fail "$OPT_CERT isn't a PEM certificate." \
     "the file is in DER or PFX format, or is the key." "convert it to PEM, for example: openssl x509 -inform der -in cert.cer -out cert.pem"
-  local cert_key key_key
-  cert_key="$(openssl x509 -in "$OPT_CERT" -noout -pubkey 2>/dev/null | openssl sha256)"
-  key_key="$(openssl pkey -in "$OPT_KEY" -pubout 2>/dev/null | openssl sha256)" || true
-  [[ -n "$key_key" && "$cert_key" == "$key_key" ]] || fail "The key doesn't match the certificate." \
+  local cert_pub key_pub
+  cert_pub="$(openssl x509 -in "$OPT_CERT" -noout -pubkey 2>/dev/null)" || true
+  key_pub="$(openssl pkey -in "$OPT_KEY" -pubout -passin pass: 2>/dev/null)" || true
+  [[ -n "$cert_pub" && -n "$key_pub" && "$cert_pub" == "$key_pub" ]] || fail "The key doesn't match the certificate." \
     "the key belongs to a different certificate, or is encrypted with a passphrase." \
     "rerun with the matching, unencrypted key file."
   if ! openssl x509 -in "$OPT_CERT" -noout -checkend 0 >/dev/null 2>&1; then
@@ -665,9 +673,9 @@ EOF
 copy_certificate() {
   mkdir -p "$INSTALL_DIR/tls"
   chmod 0700 "$INSTALL_DIR/tls"
-  [[ "$OPT_TLS" == custom ]] || return 0
-  install -m 0644 "$OPT_CERT" "$INSTALL_DIR/tls/cert.pem"
-  install -m 0600 "$OPT_KEY" "$INSTALL_DIR/tls/key.pem"
+  [[ "$OPT_TLS" == custom && -n "$OPT_CERT" && -n "$OPT_KEY" ]] || return 0
+  [[ "$OPT_CERT" -ef "$INSTALL_DIR/tls/cert.pem" ]] || install -m 0644 "$OPT_CERT" "$INSTALL_DIR/tls/cert.pem"
+  [[ "$OPT_KEY" -ef "$INSTALL_DIR/tls/key.pem" ]] || install -m 0600 "$OPT_KEY" "$INSTALL_DIR/tls/key.pem"
 }
 
 tls_directive() {
@@ -695,8 +703,11 @@ render_config() {
   tmp="$(mktemp -d)"
   local file
   for file in docker-compose.yml.tmpl Caddyfile.tmpl; do
-    fetch_installer_file "$file" "$tmp/$file" || fail "Couldn't download the configuration templates for $ROLLCALL_VERSION." \
-      "the host can't reach raw.githubusercontent.com." "$(log_hint)"
+    if ! fetch_installer_file "$file" "$tmp/$file"; then
+      rm -rf "$tmp"
+      fail "Couldn't download the configuration templates for $ROLLCALL_VERSION." \
+        "the host can't reach GitHub." "$(log_hint)"
+    fi
   done
   render_template "$tmp/docker-compose.yml.tmpl" "$INSTALL_DIR/docker-compose.yml"
   render_template "$tmp/Caddyfile.tmpl" "$INSTALL_DIR/Caddyfile"
@@ -709,7 +720,9 @@ render_config() {
   if [[ -n "$dir" && -f "$dir/install.sh" ]]; then
     [[ "$dir/install.sh" -ef "$INSTALL_DIR/install.sh" ]] || install -m 0755 "$dir/install.sh" "$INSTALL_DIR/install.sh"
   else
-    fetch_installer_file install.sh "$INSTALL_DIR/install.sh" && chmod 0755 "$INSTALL_DIR/install.sh"
+    fetch_installer_file install.sh "$INSTALL_DIR/install.sh" || fail "Couldn't download install.sh for $ROLLCALL_VERSION." \
+      "the host can't reach GitHub." "$(log_hint)"
+    chmod 0755 "$INSTALL_DIR/install.sh"
   fi
   logged compose config --quiet || fail "The rendered Compose file isn't valid." \
     "a template or .env value is malformed." "$(log_hint)"
@@ -732,9 +745,17 @@ start_stack() {
 }
 
 # readyz_json prints the app's /readyz body, fetched from inside the proxy container so it
-# works before DNS or the certificate is in place.
+# works before DNS or the certificate is in place. BusyBox wget discards the body on HTTP 503,
+# so prefer a plain HTTP/1.0 probe over nc to keep the diagnostic JSON when not ready.
 readyz_json() {
-  compose exec -T proxy wget -q -T 5 -O - http://app:8080/readyz 2>/dev/null
+  compose exec -T proxy sh -c '
+    if command -v nc >/dev/null 2>&1; then
+      printf "GET /readyz HTTP/1.0\r\nHost: app\r\n\r\n" | nc -w 5 app 8080
+    else
+      printf "\r\n"
+      wget -q -T 5 -O - http://app:8080/readyz
+    fi
+  ' 2>/dev/null | tr -d '\r' | sed '1,/^$/d'
 }
 
 wait_for_ready() {
@@ -907,27 +928,37 @@ cmd_backup() {
 restore_database() {
   logged compose stop proxy worker app
   logged compose up --detach --wait db
+  # Drop and recreate the public schema so objects added by a partially-applied update
+  # (not present in the backup) are removed instead of surviving or blocking pg_restore.
+  compose exec -T db psql -U rollcall -d rollcall -v ON_ERROR_STOP=1 \
+    -c 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;' >>"$LOG_FILE" 2>&1 || return 1
   compose exec -T db pg_restore -U rollcall -d rollcall --clean --if-exists --no-owner --single-transaction \
     <"$1" >>"$LOG_FILE" 2>&1
+}
+
+RESTORE_TMP=""
+cleanup_restore() {
+  [[ -n "$RESTORE_TMP" ]] && rm -rf "$RESTORE_TMP"
+  RESTORE_TMP=""
 }
 
 cmd_restore() {
   require_root
   require_installed
-  local archive="$ARG" tmp
+  local archive="$ARG"
   [[ -r "$archive" ]] || fail "Couldn't read the backup archive $archive." "the path is wrong." \
     "check the path; backups are in $(backup_dir) by default."
 
   step "Checking the backup archive"
-  tmp="$(mktemp -d)"
-  if ! tar -xzf "$archive" -C "$tmp" 2>>"$LOG_FILE" || [[ ! -f "$tmp/manifest" || ! -f "$tmp/db.dump" || ! -f "$tmp/config/.env" ]]; then
-    rm -rf "$tmp"
+  RESTORE_TMP="$(mktemp -d)"
+  trap cleanup_restore EXIT
+  if ! tar -xzf "$archive" -C "$RESTORE_TMP" 2>>"$LOG_FILE" || [[ ! -f "$RESTORE_TMP/manifest" || ! -f "$RESTORE_TMP/db.dump" || ! -f "$RESTORE_TMP/config/.env" ]]; then
     fail "$archive isn't a Rollcall backup." "the file is damaged or was made by another tool." \
       "pick an archive named rollcall-backup-<timestamp>.tar.gz."
   fi
   local version created
-  version="$(sed -n 's/^version=//p' "$tmp/manifest")"
-  created="$(sed -n 's/^created=//p' "$tmp/manifest")"
+  version="$(sed -n 's/^version=//p' "$RESTORE_TMP/manifest")"
+  created="$(sed -n 's/^created=//p' "$RESTORE_TMP/manifest")"
   # 20261026T215308Z -> 2026-10-26 21:53 UTC
   created="$(sed -E 's/^([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2}).*/\1-\2-\3 \4:\5 UTC/' <<<"$created")"
   ok "Backup of Rollcall $version from $created."
@@ -944,18 +975,18 @@ cmd_restore() {
   logged compose down
   # The database password comes from the backup, so the database volume starts fresh.
   logged docker volume rm rollcall_db-data || true
-  install -m 0600 -o root -g root "$tmp/config/.env" "$INSTALL_DIR/.env"
-  install -m 0644 "$tmp/config/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml"
-  install -m 0644 "$tmp/config/Caddyfile" "$INSTALL_DIR/Caddyfile"
+  install -m 0600 -o root -g root "$RESTORE_TMP/config/.env" "$INSTALL_DIR/.env"
+  install -m 0644 "$RESTORE_TMP/config/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml"
+  install -m 0644 "$RESTORE_TMP/config/Caddyfile" "$INSTALL_DIR/Caddyfile"
   rm -rf "$INSTALL_DIR/tls"
-  cp -rp "$tmp/config/tls" "$INSTALL_DIR/tls"
+  cp -rp "$RESTORE_TMP/config/tls" "$INSTALL_DIR/tls"
   ok "Configuration restored."
 
   step "Restoring the database"
   logged compose pull --quiet db app worker || true
-  restore_database "$tmp/db.dump" || { rm -rf "$tmp"; fail "Couldn't restore the database." \
-    "the archive's database dump is damaged." "restore the previous state with: sudo bash $INSTALL_DIR/install.sh restore $safety"; }
-  rm -rf "$tmp"
+  restore_database "$RESTORE_TMP/db.dump" || fail "Couldn't restore the database." \
+    "the archive's database dump is damaged." "restore the previous state with: sudo bash $INSTALL_DIR/install.sh restore $safety"
+  cleanup_restore
   ok "Database restored."
 
   step "Starting Rollcall"
@@ -985,13 +1016,19 @@ set_env_value() {
   sed -i "s|^$1=.*|$1=$2|" "$INSTALL_DIR/.env"
 }
 
-# rollback_update <dir> <backup> puts the previous version back after a failed update.
-rollback_update() {
-  step "Putting the previous version back"
+restore_previous_files() {
   install -m 0600 -o root -g root "$1/.env" "$INSTALL_DIR/.env"
   install -m 0644 "$1/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml"
   install -m 0644 "$1/Caddyfile" "$INSTALL_DIR/Caddyfile"
-  install -m 0755 "$1/install.sh" "$INSTALL_DIR/install.sh" 2>/dev/null || true
+  if [[ -f "$1/install.sh" ]]; then
+    install -m 0755 "$1/install.sh" "$INSTALL_DIR/install.sh"
+  fi
+}
+
+# rollback_update <dir> <backup> puts the previous version back after a failed update.
+rollback_update() {
+  step "Putting the previous version back"
+  restore_previous_files "$1"
   # A failed migration may have changed part of the schema, so the database goes back too.
   local tmp status=1
   tmp="$(mktemp -d)"
@@ -1008,22 +1045,42 @@ rollback_update() {
   fi
 }
 
+UPDATE_STAGE=""
+UPDATE_PREVIOUS=""
+cleanup_update() {
+  [[ -n "$UPDATE_STAGE" ]] && rm -rf "$UPDATE_STAGE"
+  [[ -n "$UPDATE_PREVIOUS" ]] && rm -rf "$UPDATE_PREVIOUS"
+  UPDATE_STAGE=""
+  UPDATE_PREVIOUS=""
+}
+
 cmd_update() {
   require_root
   require_installed
 
   # Run the newest installer, so the update uses that version's templates and steps.
+  # Stage it in a private 0700 directory named install.sh so script_dir never points at /tmp
+  # and render_config copies the pinned release script directly to $INSTALL_DIR/install.sh.
   if [[ "${ROLLCALL_UPDATE_SOURCE:-}" != local ]]; then
     step "Downloading the latest installer"
-    local latest
-    latest="$(mktemp)"
-    logged curl -fsSL --retry 3 -o "$latest" "$(latest_installer_url)" || fail "Couldn't download the latest installer." \
-      "the host can't reach github.com." "$(log_hint)"
+    local stage latest
+    stage="$(mktemp -d)"
+    chmod 0700 "$stage"
+    latest="$stage/install.sh"
+    if ! logged curl -fsSL --retry 3 -o "$latest" "$(latest_installer_url)"; then
+      rm -rf "$stage"
+      fail "Couldn't download the latest installer." \
+        "the host can't reach github.com." "$(log_hint)"
+    fi
     ok "Latest installer is version $(installer_version "$latest")."
     local args=(update)
     [[ $OPT_YES -eq 1 ]] && args+=(--yes)
-    ROLLCALL_UPDATE_SOURCE=local exec bash "$latest" "${args[@]}"
+    ROLLCALL_UPDATE_SOURCE=local ROLLCALL_UPDATE_STAGE="$stage" exec bash "$latest" "${args[@]}"
   fi
+
+  UPDATE_STAGE="${ROLLCALL_UPDATE_STAGE:-}"
+  UPDATE_PREVIOUS=""
+  trap cleanup_update EXIT
 
   local current
   current="$(env_value ROLLCALL_VERSION)"
@@ -1039,20 +1096,20 @@ cmd_update() {
   local backup="$BACKUP_PATH"
   ok "Backup written to $backup."
 
-  local previous
-  previous="$(mktemp -d)"
-  cp -p "$INSTALL_DIR/.env" "$INSTALL_DIR/docker-compose.yml" "$INSTALL_DIR/Caddyfile" "$previous/"
-  cp -p "$INSTALL_DIR/install.sh" "$previous/" 2>/dev/null || true
+  UPDATE_PREVIOUS="$(mktemp -d)"
+  cp -p "$INSTALL_DIR/.env" "$INSTALL_DIR/docker-compose.yml" "$INSTALL_DIR/Caddyfile" "$UPDATE_PREVIOUS/"
+  cp -p "$INSTALL_DIR/install.sh" "$UPDATE_PREVIOUS/" 2>/dev/null || true
 
   set_env_value ROLLCALL_VERSION "$ROLLCALL_VERSION"
   OPT_HOSTNAME="$(env_value ROLLCALL_HOSTNAME)"
   OPT_TLS="$(env_value ROLLCALL_TLS_MODE)"
-  render_config
+  if ! (render_config); then
+    restore_previous_files "$UPDATE_PREVIOUS"
+    exit 1
+  fi
   step "Downloading the Rollcall $ROLLCALL_VERSION images"
   if ! logged compose pull --quiet; then
-    install -m 0600 -o root -g root "$previous/.env" "$INSTALL_DIR/.env"
-    install -m 0644 "$previous/docker-compose.yml" "$previous/Caddyfile" "$INSTALL_DIR/"
-    rm -rf "$previous"
+    restore_previous_files "$UPDATE_PREVIOUS"
     fail "Couldn't download the Rollcall $ROLLCALL_VERSION images. Rollcall $current is still running." \
       "the host can't reach ghcr.io or Docker Hub." "$(log_hint)"
   fi
@@ -1062,12 +1119,10 @@ cmd_update() {
   if ! logged compose up --detach --wait --wait-timeout 300 || ! readyz_ok_with_retry; then
     printf '%s✕%s Rollcall %s didn'\''t start.\n' "$RED" "$RESET" "$ROLLCALL_VERSION" >&2
     printf '  Likely cause: a database migration or the new app failed; "install.sh logs app" shows why.\n' >&2
-    rollback_update "$previous" "$backup"
-    rm -rf "$previous"
+    rollback_update "$UPDATE_PREVIOUS" "$backup"
     printf '  The backup taken before the update is %s.\n' "$backup" >&2
     exit 1
   fi
-  rm -rf "$previous"
   ok "Rollcall $ROLLCALL_VERSION is running and ready."
 }
 
