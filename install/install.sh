@@ -159,7 +159,7 @@ Writes rollcall-backup-<timestamp>.tar.gz with a database dump, .env, and the re
 configuration. The archive contains the master key, so store it like a password.
 
 Options:
-  --output <dir>   Directory to write the archive to (default: /opt/rollcall/backups)
+  --output <dir>   Directory to write the archive to (default: /var/backups/rollcall)
   -h, --help       Show this help
 EOF
 }
@@ -315,7 +315,6 @@ parse_args() {
       usage_error "Unknown option $1 for $COMMAND."
     fi
 
-    # shellcheck disable=SC2034 # OPT_PURGE and OPT_OUTPUT are read by uninstall and backup
     case "$option" in
       --yes) OPT_YES=1 ;;
       --purge) OPT_PURGE=1 ;;
@@ -878,9 +877,287 @@ cmd_admin_reset() {
     "portal sign-in and roles arrive in the next release." "nothing to do yet; no one can sign in to reset."
 }
 
-cmd_not_yet() {
-  fail "$COMMAND isn't available in this build of the installer yet." "" \
-    "use a newer installer from https://github.com/$REPO_SLUG/releases."
+# confirm <question> asks for "yes" unless --yes was given. Without a terminal, --yes is required.
+confirm() {
+  [[ $OPT_YES -eq 1 ]] && return 0
+  { : </dev/tty; } 2>/dev/null || fail "$COMMAND needs confirmation, but there's no terminal to ask on." "" \
+    "rerun with --yes to confirm: sudo bash $INSTALL_DIR/install.sh $COMMAND --yes"
+  printf '%s\n' "$1" >/dev/tty
+  [[ "$(ask "Type yes to continue" "")" == yes ]] || fail "Nothing was changed." "" ""
+}
+
+# --- Backup and restore ----------------------------------------------------------------------
+
+# create_backup <dir> writes an archive and sets BACKUP_PATH.
+create_backup() {
+  local dir="$1" tmp stamp
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  BACKUP_PATH="$dir/rollcall-backup-$stamp.tar.gz"
+  mkdir -p "$dir"
+  chmod 0700 "$dir"
+  tmp="$(mktemp -d)"
+  mkdir "$tmp/config"
+
+  logged compose up --detach --wait db || { rm -rf "$tmp"; return 1; }
+  if ! compose exec -T db pg_dump -U rollcall -d rollcall --format=custom >"$tmp/db.dump" 2>>"$LOG_FILE"; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  cp -p "$INSTALL_DIR/.env" "$INSTALL_DIR/docker-compose.yml" "$INSTALL_DIR/Caddyfile" "$tmp/config/"
+  cp -rp "$INSTALL_DIR/tls" "$tmp/config/tls"
+  printf 'format=1\nversion=%s\ncreated=%s\n' "$(env_value ROLLCALL_VERSION)" "$stamp" >"$tmp/manifest"
+
+  (umask 077 && tar -czf "$BACKUP_PATH" -C "$tmp" manifest db.dump config) || { rm -rf "$tmp"; return 1; }
+  chmod 0600 "$BACKUP_PATH"
+  rm -rf "$tmp"
+}
+
+backup_dir() { printf '%s' "${OPT_OUTPUT:-${ROLLCALL_BACKUP_DIR:-/var/backups/rollcall}}"; }
+
+cmd_backup() {
+  require_root
+  require_installed
+  step "Backing up the database and configuration"
+  create_backup "$(backup_dir)" || fail "Couldn't create the backup." \
+    "the database container isn't running, or the disk is full." "$(log_hint)"
+  ok "Backup written to $BACKUP_PATH."
+  printf '  The archive contains the master key. Store it somewhere only admins can read.\n'
+}
+
+# restore_database <dump> replaces the database contents with a pg_dump archive.
+restore_database() {
+  logged compose stop proxy worker app
+  logged compose up --detach --wait db
+  # Drop and recreate the public schema so objects added by a partially-applied update
+  # (not present in the backup) are removed instead of surviving or blocking pg_restore.
+  compose exec -T db psql -U rollcall -d rollcall -v ON_ERROR_STOP=1 \
+    -c 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;' >>"$LOG_FILE" 2>&1 || return 1
+  compose exec -T db pg_restore -U rollcall -d rollcall --clean --if-exists --no-owner --single-transaction \
+    <"$1" >>"$LOG_FILE" 2>&1
+}
+
+RESTORE_TMP=""
+cleanup_restore() {
+  [[ -n "$RESTORE_TMP" ]] && rm -rf "$RESTORE_TMP"
+  RESTORE_TMP=""
+}
+
+cmd_restore() {
+  require_root
+  require_installed
+  local archive="$ARG"
+  [[ -r "$archive" ]] || fail "Couldn't read the backup archive $archive." "the path is wrong." \
+    "check the path; backups are in $(backup_dir) by default."
+
+  step "Checking the backup archive"
+  RESTORE_TMP="$(mktemp -d)"
+  trap cleanup_restore EXIT
+  if ! tar -xzf "$archive" -C "$RESTORE_TMP" 2>>"$LOG_FILE" || [[ ! -f "$RESTORE_TMP/manifest" || ! -f "$RESTORE_TMP/db.dump" || ! -f "$RESTORE_TMP/config/.env" ]]; then
+    fail "$archive isn't a Rollcall backup." "the file is damaged or was made by another tool." \
+      "pick an archive named rollcall-backup-<timestamp>.tar.gz."
+  fi
+  local version created
+  version="$(sed -n 's/^version=//p' "$RESTORE_TMP/manifest")"
+  created="$(sed -n 's/^created=//p' "$RESTORE_TMP/manifest")"
+  # 20261026T215308Z -> 2026-10-26 21:53 UTC
+  created="$(sed -E 's/^([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2}).*/\1-\2-\3 \4:\5 UTC/' <<<"$created")"
+  ok "Backup of Rollcall $version from $created."
+
+  confirm "This replaces all Rollcall data on this host with the backup from $created. Changes made since then are lost."
+
+  step "Backing up the current state first"
+  create_backup "$(backup_dir)" || fail "Couldn't back up the current state, so nothing was restored." \
+    "the database container isn't running, or the disk is full." "$(log_hint)"
+  local safety="$BACKUP_PATH"
+  ok "Current state saved to $safety."
+
+  step "Restoring the configuration"
+  logged compose down
+  # The database password comes from the backup, so the database volume starts fresh.
+  logged docker volume rm rollcall_db-data || true
+  install -m 0600 -o root -g root "$RESTORE_TMP/config/.env" "$INSTALL_DIR/.env"
+  install -m 0644 "$RESTORE_TMP/config/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml"
+  install -m 0644 "$RESTORE_TMP/config/Caddyfile" "$INSTALL_DIR/Caddyfile"
+  rm -rf "$INSTALL_DIR/tls"
+  cp -rp "$RESTORE_TMP/config/tls" "$INSTALL_DIR/tls"
+  ok "Configuration restored."
+
+  step "Restoring the database"
+  logged compose pull --quiet db app worker || true
+  restore_database "$RESTORE_TMP/db.dump" || fail "Couldn't restore the database." \
+    "the archive's database dump is damaged." "restore the previous state with: sudo bash $INSTALL_DIR/install.sh restore $safety"
+  cleanup_restore
+  ok "Database restored."
+
+  step "Starting Rollcall"
+  logged compose up --detach --wait --wait-timeout 300 || fail "Rollcall didn't start after the restore." \
+    "a container failed to start; its logs say why." "run \"sudo bash $INSTALL_DIR/install.sh logs app\"."
+  ok "All four services are running and healthy."
+  OPT_HOSTNAME="$(env_value ROLLCALL_HOSTNAME)"
+  wait_for_ready
+  echo
+  ok "Restored Rollcall $version from $created."
+  printf '  The state before the restore is saved in %s.\n' "$safety"
+}
+
+# --- Update ----------------------------------------------------------------------------------
+
+latest_installer_url() {
+  if [[ "$ROLLCALL_VERSION" == edge ]]; then
+    printf 'https://raw.githubusercontent.com/%s/main/install/install.sh' "$REPO_SLUG"
+  else
+    printf 'https://github.com/%s/releases/latest/download/install.sh' "$REPO_SLUG"
+  fi
+}
+
+installer_version() { sed -n 's/^ROLLCALL_VERSION="\(.*\)"$/\1/p' "$1" | head -n1; }
+
+set_env_value() {
+  sed -i "s|^$1=.*|$1=$2|" "$INSTALL_DIR/.env"
+}
+
+restore_previous_files() {
+  install -m 0600 -o root -g root "$1/.env" "$INSTALL_DIR/.env"
+  install -m 0644 "$1/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml"
+  install -m 0644 "$1/Caddyfile" "$INSTALL_DIR/Caddyfile"
+  if [[ -f "$1/install.sh" ]]; then
+    install -m 0755 "$1/install.sh" "$INSTALL_DIR/install.sh"
+  fi
+}
+
+# rollback_update <dir> <backup> puts the previous version back after a failed update.
+rollback_update() {
+  step "Putting the previous version back"
+  restore_previous_files "$1"
+  # A failed migration may have changed part of the schema, so the database goes back too.
+  local tmp status=1
+  tmp="$(mktemp -d)"
+  if tar -xzf "$2" -C "$tmp" db.dump && restore_database "$tmp/db.dump" &&
+    logged compose up --detach --wait --wait-timeout 300; then
+    status=0
+  fi
+  rm -rf "$tmp"
+  if [[ $status -eq 0 ]]; then
+    ok "Rollcall $(env_value ROLLCALL_VERSION) is running again."
+  else
+    printf '%s✕%s Couldn'\''t start the previous version either.\n' "$RED" "$RESET" >&2
+    printf '  Next: restore the backup with: sudo bash %s/install.sh restore %s\n' "$INSTALL_DIR" "$2" >&2
+  fi
+}
+
+UPDATE_STAGE=""
+UPDATE_PREVIOUS=""
+cleanup_update() {
+  [[ -n "$UPDATE_STAGE" ]] && rm -rf "$UPDATE_STAGE"
+  [[ -n "$UPDATE_PREVIOUS" ]] && rm -rf "$UPDATE_PREVIOUS"
+  UPDATE_STAGE=""
+  UPDATE_PREVIOUS=""
+}
+
+cmd_update() {
+  require_root
+  require_installed
+
+  # Run the newest installer, so the update uses that version's templates and steps.
+  # Stage it in a private 0700 directory named install.sh so script_dir never points at /tmp
+  # and render_config copies the pinned release script directly to $INSTALL_DIR/install.sh.
+  if [[ "${ROLLCALL_UPDATE_SOURCE:-}" != local ]]; then
+    step "Downloading the latest installer"
+    local stage latest
+    stage="$(mktemp -d)"
+    chmod 0700 "$stage"
+    latest="$stage/install.sh"
+    if ! logged curl -fsSL --retry 3 -o "$latest" "$(latest_installer_url)"; then
+      rm -rf "$stage"
+      fail "Couldn't download the latest installer." \
+        "the host can't reach github.com." "$(log_hint)"
+    fi
+    ok "Latest installer is version $(installer_version "$latest")."
+    local args=(update)
+    [[ $OPT_YES -eq 1 ]] && args+=(--yes)
+    ROLLCALL_UPDATE_SOURCE=local ROLLCALL_UPDATE_STAGE="$stage" exec bash "$latest" "${args[@]}"
+  fi
+
+  UPDATE_STAGE="${ROLLCALL_UPDATE_STAGE:-}"
+  UPDATE_PREVIOUS=""
+  trap cleanup_update EXIT
+
+  local current
+  current="$(env_value ROLLCALL_VERSION)"
+  if [[ "$current" == "$ROLLCALL_VERSION" && "$ROLLCALL_VERSION" != edge ]]; then
+    ok "Rollcall $current is already the latest version."
+    exit 0
+  fi
+  confirm "This updates Rollcall from $current to $ROLLCALL_VERSION. Rollcall is unavailable for a minute or two."
+
+  step "Backing up before the update"
+  create_backup "$(backup_dir)" || fail "Couldn't create the backup, so nothing was updated." \
+    "the database container isn't running, or the disk is full." "$(log_hint)"
+  local backup="$BACKUP_PATH"
+  ok "Backup written to $backup."
+
+  UPDATE_PREVIOUS="$(mktemp -d)"
+  cp -p "$INSTALL_DIR/.env" "$INSTALL_DIR/docker-compose.yml" "$INSTALL_DIR/Caddyfile" "$UPDATE_PREVIOUS/"
+  cp -p "$INSTALL_DIR/install.sh" "$UPDATE_PREVIOUS/" 2>/dev/null || true
+
+  set_env_value ROLLCALL_VERSION "$ROLLCALL_VERSION"
+  OPT_HOSTNAME="$(env_value ROLLCALL_HOSTNAME)"
+  OPT_TLS="$(env_value ROLLCALL_TLS_MODE)"
+  if ! (render_config); then
+    restore_previous_files "$UPDATE_PREVIOUS"
+    exit 1
+  fi
+  step "Downloading the Rollcall $ROLLCALL_VERSION images"
+  if ! logged compose pull --quiet; then
+    restore_previous_files "$UPDATE_PREVIOUS"
+    fail "Couldn't download the Rollcall $ROLLCALL_VERSION images. Rollcall $current is still running." \
+      "the host can't reach ghcr.io or Docker Hub." "$(log_hint)"
+  fi
+  ok "Images downloaded."
+
+  step "Starting Rollcall $ROLLCALL_VERSION and running database migrations"
+  if ! logged compose up --detach --wait --wait-timeout 300 || ! readyz_ok_with_retry; then
+    printf '%s✕%s Rollcall %s didn'\''t start.\n' "$RED" "$RESET" "$ROLLCALL_VERSION" >&2
+    printf '  Likely cause: a database migration or the new app failed; "install.sh logs app" shows why.\n' >&2
+    rollback_update "$UPDATE_PREVIOUS" "$backup"
+    printf '  The backup taken before the update is %s.\n' "$backup" >&2
+    exit 1
+  fi
+  ok "Rollcall $ROLLCALL_VERSION is running and ready."
+}
+
+readyz_ok_with_retry() {
+  local _ ready
+  for _ in $(seq 1 30); do
+    ready="$(readyz_json || true)"
+    [[ "$ready" == '{"db":"ok","migrations":"current","worker":"ok"}' ]] && return 0
+    sleep 2
+  done
+  return 1
+}
+
+# --- Uninstall -------------------------------------------------------------------------------
+
+cmd_uninstall() {
+  require_root
+  [[ -f "$INSTALL_DIR/docker-compose.yml" ]] || fail "Rollcall isn't installed in $INSTALL_DIR." "" ""
+  if [[ $OPT_PURGE -eq 1 ]]; then
+    confirm "This deletes Rollcall and all its data: the database, certificates, secrets, and $INSTALL_DIR. Backups in $(backup_dir) are kept."
+  else
+    confirm "This removes the Rollcall containers. The database and configuration are kept."
+  fi
+
+  step "Stopping and removing the containers"
+  if [[ $OPT_PURGE -eq 1 ]]; then
+    logged compose down --volumes --remove-orphans || fail "Couldn't remove the containers." "" "$(log_hint)"
+    rm -rf "$INSTALL_DIR"
+    ok "Rollcall and its data are removed. Backups in $(backup_dir) were kept."
+  else
+    logged compose down --remove-orphans || fail "Couldn't remove the containers." "" "$(log_hint)"
+    rm -f "$INSTALL_DIR/.installed"
+    ok "Containers removed. Data and configuration are kept in $INSTALL_DIR and the Docker volumes."
+    printf '  To start Rollcall again with the same data, run: sudo bash %s/install.sh install\n' "$INSTALL_DIR"
+  fi
 }
 
 main() {
@@ -895,7 +1172,10 @@ main() {
     status) cmd_status ;;
     logs) cmd_logs ;;
     admin-reset) cmd_admin_reset ;;
-    update | backup | restore | uninstall) cmd_not_yet ;;
+    update) cmd_update ;;
+    backup) cmd_backup ;;
+    restore) cmd_restore ;;
+    uninstall) cmd_uninstall ;;
   esac
 }
 

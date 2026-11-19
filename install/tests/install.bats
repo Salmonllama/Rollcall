@@ -432,3 +432,123 @@ render_with() {
   [ "$(grep -c '^    ports:' "$TEST_DIR/docker-compose.yml")" -eq 1 ]
   ! grep -q '5432:' "$TEST_DIR/docker-compose.yml"
 }
+
+# --- Update, backup, restore, uninstall --------------------------------------------------------
+
+@test "destructive commands need --yes when there is no terminal" {
+  load_installer
+  COMMAND=uninstall
+  run confirm "This deletes everything." </dev/null
+  if { : </dev/tty; } 2>/dev/null; then skip "a terminal is attached"; fi
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"uninstall needs confirmation, but there's no terminal to ask on."* ]]
+  [[ "$output" == *"--yes"* ]]
+}
+
+@test "confirm passes with --yes" {
+  load_installer
+  OPT_YES=1
+  run confirm "This deletes everything."
+  [ "$status" -eq 0 ]
+}
+
+@test "restore rejects a file that isn't a Rollcall backup" {
+  load_installer
+  INSTALL_DIR="$ROLLCALL_DIR"
+  require_root() { :; }
+  touch "$ROLLCALL_DIR/.installed"
+  echo "not a tarball" >"$TEST_DIR/backup.tar.gz"
+  ARG="$TEST_DIR/backup.tar.gz"
+  run cmd_restore
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"isn't a Rollcall backup."* ]]
+}
+
+@test "restore reports a missing archive" {
+  load_installer
+  INSTALL_DIR="$ROLLCALL_DIR"
+  require_root() { :; }
+  touch "$ROLLCALL_DIR/.installed"
+  ARG="$TEST_DIR/missing.tar.gz"
+  run cmd_restore
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Couldn't read the backup archive"* ]]
+}
+
+@test "backups go outside the install directory so uninstall --purge keeps them" {
+  load_installer
+  unset ROLLCALL_BACKUP_DIR
+  [ "$(backup_dir)" = /var/backups/rollcall ]
+  OPT_OUTPUT=/srv/backups
+  [ "$(backup_dir)" = /srv/backups ]
+}
+
+@test "commands other than install need a finished install" {
+  load_installer
+  INSTALL_DIR="$ROLLCALL_DIR"
+  run require_installed
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Rollcall isn't installed in $ROLLCALL_DIR."* ]]
+}
+
+@test "the version of a downloaded installer is read from its source" {
+  load_installer
+  printf '#!/usr/bin/env bash\nROLLCALL_VERSION="1.4.0"\n' >"$TEST_DIR/latest.sh"
+  [ "$(installer_version "$TEST_DIR/latest.sh")" = 1.4.0 ]
+}
+
+@test "update works on custom TLS installs and restores install.sh if image pull fails" {
+  load_installer
+  INSTALL_DIR="$ROLLCALL_DIR"
+  ROLLCALL_VERSION="1.5.0"
+  ROLLCALL_UPDATE_SOURCE=local
+  OPT_YES=1
+  require_root() { :; }
+  create_backup() { BACKUP_PATH="$TEST_DIR/backup.tar.gz"; }
+  install() {
+    local args=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -o | -g) shift 2 ;;
+        *) args+=("$1"); shift ;;
+      esac
+    done
+    command install "${args[@]}"
+  }
+  compose() {
+    case "$1" in
+      config) return 0 ;;
+      pull) return 1 ;;
+    esac
+  }
+
+  touch "$ROLLCALL_DIR/.installed"
+  printf 'ROLLCALL_VERSION=1.4.0\nROLLCALL_HOSTNAME=rc.test\nROLLCALL_TLS_MODE=custom\nROLLCALL_ACME_EMAIL=\nROLLCALL_IMAGE_PREFIX=ghcr.io/salmonllama\n' >"$ROLLCALL_DIR/.env"
+  echo "old-compose" >"$ROLLCALL_DIR/docker-compose.yml"
+  echo "old-caddy" >"$ROLLCALL_DIR/Caddyfile"
+  printf '#!/usr/bin/env bash\nROLLCALL_VERSION="1.4.0"\n' >"$ROLLCALL_DIR/install.sh"
+  mkdir -p "$ROLLCALL_DIR/tls"
+  echo "custom-cert" >"$ROLLCALL_DIR/tls/cert.pem"
+  echo "custom-key" >"$ROLLCALL_DIR/tls/key.pem"
+
+  run cmd_update
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Couldn't download the Rollcall 1.5.0 images. Rollcall 1.4.0 is still running."* ]]
+  [ "$(env_value ROLLCALL_VERSION)" = 1.4.0 ]
+  [ "$(cat "$ROLLCALL_DIR/docker-compose.yml")" = old-compose ]
+  [ "$(cat "$ROLLCALL_DIR/tls/cert.pem")" = custom-cert ]
+  [ "$(installer_version "$ROLLCALL_DIR/install.sh")" = 1.4.0 ]
+}
+
+@test "restore_database resets the public schema before running pg_restore" {
+  load_installer
+  local calls="$TEST_DIR/compose.calls"
+  compose() {
+    printf '%s\n' "$*" >>"$calls"
+  }
+  : >"$TEST_DIR/db.dump"
+  run restore_database "$TEST_DIR/db.dump"
+  [ "$status" -eq 0 ]
+  grep -q 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;' "$calls"
+  grep -q 'pg_restore' "$calls"
+}
