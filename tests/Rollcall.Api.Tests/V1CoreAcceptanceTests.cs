@@ -180,12 +180,13 @@ public sealed class V1CoreAcceptanceTests(PostgresFixture postgres) : IClassFixt
         {
             await conn.OpenAsync();
             var roleName = $"rc_app_{Guid.NewGuid():N}"[..20];
-            await using (var setupRole = new NpgsqlCommand($"CREATE ROLE {roleName} LOGIN; GRANT SELECT, INSERT ON audit_event TO {roleName};", conn))
+            const string rolePassword = "rc_test_restricted_pw";
+            await using (var setupRole = new NpgsqlCommand($"CREATE ROLE {roleName} LOGIN PASSWORD '{rolePassword}'; GRANT SELECT, INSERT ON audit_event TO {roleName};", conn))
             {
                 await setupRole.ExecuteNonQueryAsync();
             }
 
-            await using var restricted = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(h.ConnectionString) { Username = roleName }.ConnectionString);
+            await using var restricted = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(h.ConnectionString) { Username = roleName, Password = rolePassword }.ConnectionString);
             await restricted.OpenAsync();
             var pgEx = await Assert.ThrowsAsync<PostgresException>(async () =>
             {
