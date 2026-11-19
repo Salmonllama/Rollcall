@@ -81,6 +81,7 @@ update() {
   [[ $status -ne 0 ]] || die "update to the broken version exited 0"
   [[ "$out" == *"The backup taken before the update is /"* ]] || die "the failed update didn't print the backup path"
   [[ "$(env_value ROLLCALL_VERSION)" == edge ]] || die "ROLLCALL_VERSION is $(env_value ROLLCALL_VERSION) after the rollback"
+  grep -qx 'ROLLCALL_VERSION="edge"' "$dir/install.sh" || die "$dir/install.sh wasn't rolled back to edge"
   grep -q 'rollcall-app:edge$' "$dir/docker-compose.yml" || die "docker-compose.yml doesn't point at edge after the rollback"
   [[ "$(seed_checksum)" == "$before" ]] || die "data changed after the rollback"
   ! psql_db "SELECT 1 FROM ci_half_applied" >/dev/null 2>&1 || die "the broken migration's table survived the rollback"
@@ -89,6 +90,7 @@ update() {
 
   ROLLCALL_UPDATE_SOURCE=local bash "$work/$good/install.sh" update --yes
   [[ "$(env_value ROLLCALL_VERSION)" == "$good" ]] || die "ROLLCALL_VERSION is $(env_value ROLLCALL_VERSION) after the update"
+  grep -qx "ROLLCALL_VERSION=\"$good\"" "$dir/install.sh" || die "$dir/install.sh wasn't updated to $good"
   [[ "$(seed_checksum)" == "$before" ]] || die "data changed during the update"
   "$here/stack-smoke.sh" "$dir" "$host" >/dev/null || die "the stack isn't healthy after the update"
   pass "Update from edge to $good finished and the stack is healthy"
