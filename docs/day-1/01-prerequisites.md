@@ -39,7 +39,7 @@ Outbound from the server, on **TCP 443**:
 | Host | Why |
 | --- | --- |
 | `download.docker.com` | Installing Docker Engine, only if it's missing |
-| `github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com` | The installer and its configuration templates |
+| `github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com` | The installer and its configuration templates |
 | `ghcr.io`, `pkg-containers.githubusercontent.com` | Rollcall's container images |
 | `registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com` | The Caddy and PostgreSQL images |
 | `acme-v02.api.letsencrypt.org` | Let's Encrypt certificates, only with the Let's Encrypt option |
@@ -70,7 +70,7 @@ sudo ss -ltnp 'sport = :80 or sport = :443'
 Expected result: only the header line, which means nothing is using port 80 or 443.
 
 ```bash
-curl -fsS -o /dev/null -w '%{http_code}\n' https://ghcr.io/v2/
+curl -sS -o /dev/null -w '%{http_code}\n' https://ghcr.io/v2/
 ```
 
 Expected result: `401`. GitHub's registry answered, so outbound HTTPS works. An error or a timeout means a firewall or proxy is blocking the server.
