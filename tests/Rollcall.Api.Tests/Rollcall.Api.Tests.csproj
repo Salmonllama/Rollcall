@@ -7,11 +7,13 @@
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../Rollcall.TestSupport/Rollcall.TestSupport.csproj" />
     <ProjectReference Include="../../src/Rollcall.Api/Rollcall.Api.csproj" />
+    <ProjectReference Include="../../src/Rollcall.Agent/Rollcall.Agent.csproj" />
   </ItemGroup>
 
   <ItemGroup>

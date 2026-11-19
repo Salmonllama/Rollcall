@@ -13,5 +13,7 @@ RUN dotnet publish src/Rollcall.Worker/Rollcall.Worker.csproj -c Release -a "$TA
 FROM mcr.microsoft.com/dotnet/runtime:10.0
 WORKDIR /app
 COPY --from=build /app ./
+# Mount point for the shared rollcall-config volume (including ADR 0002 Exchange module cache).
+RUN mkdir -p /var/lib/rollcall && chown "$APP_UID" /var/lib/rollcall
 USER $APP_UID
 ENTRYPOINT ["dotnet", "Rollcall.Worker.dll"]

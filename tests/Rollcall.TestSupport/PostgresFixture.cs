@@ -14,22 +14,39 @@ namespace Rollcall.TestSupport;
 /// </summary>
 public sealed class PostgresFixture : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _container = new PostgreSqlBuilder("postgres:17").Build();
+    private readonly string? _externalConnectionString =
+        Environment.GetEnvironmentVariable("ROLLCALL_TEST_POSTGRES_CONNECTION_STRING");
 
-    public async Task InitializeAsync() => await _container.StartAsync();
+    private PostgreSqlContainer? _container;
 
-    public async Task DisposeAsync() => await _container.DisposeAsync();
+    public async Task InitializeAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_externalConnectionString))
+        {
+            _container = new PostgreSqlBuilder("postgres:17").Build();
+            await _container.StartAsync();
+        }
+    }
+
+    public async Task DisposeAsync()
+    {
+        if (_container is not null)
+        {
+            await _container.DisposeAsync();
+        }
+    }
 
     /// <summary>Creates an empty database and returns its connection string.</summary>
     public async Task<string> CreateDatabaseAsync()
     {
+        var baseConnectionString = _externalConnectionString ?? _container!.GetConnectionString();
         var name = $"test_{Guid.NewGuid():N}";
-        await using var connection = new NpgsqlConnection(_container.GetConnectionString());
+        await using var connection = new NpgsqlConnection(baseConnectionString);
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand($"CREATE DATABASE {name}", connection);
         await command.ExecuteNonQueryAsync();
 
-        return new NpgsqlConnectionStringBuilder(_container.GetConnectionString()) { Database = name }.ConnectionString;
+        return new NpgsqlConnectionStringBuilder(baseConnectionString) { Database = name }.ConnectionString;
     }
 
     public static RollcallDbContext CreateContext(string connectionString) =>

@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+site_name: Rollcall Documentation
+site_url: https://salmonllama.github.io/Rollcall/
+repo_url: https://github.com/Salmonllama/Rollcall
+repo_name: Salmonllama/Rollcall
+copyright: >-
+  Rollcall is free software licensed under GPL-3.0-or-later.
+  Rollcall is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Microsoft Corporation.
+
+theme:
+  name: material
+  logo: brand/rollcall-mark-mono.svg
+  favicon: brand/favicon.svg
+  features:
+    - navigation.instant
+    - navigation.sections
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+extra_css:
+  - brand/tokens.css
+
+nav:
+  - Home: README.md
+  - Day-1 Deployment:
+      - Overview: day-1/README.md
+      - 1. Prerequisites: day-1/01-prerequisites.md
+      - 2. Install: day-1/02-install.md
+      - 3. App registration: day-1/03-app-registration.md
+      - 4. Directory roles: day-1/04-directory-roles.md
+      - 5. First admin: day-1/05-first-admin.md
+      - 6. AD agent (hybrid): day-1/06-ad-agent.md
+      - 7. First role template: day-1/07-first-role-template.md
+      - 8. Test onboarding & offboarding: day-1/08-test-lifecycle.md
+      - 9. Backups: day-1/09-backups.md
+      - 10. Go-live checklist: day-1/10-go-live-checklist.md
+  - Technician Guides:
+      - Dashboard: technician/dashboard.md
+      - Finding users: technician/finding-users.md
+      - Previews, drift & retries: technician/previews-and-retries.md
+      - Editing attributes: technician/attributes.md
+      - Groups & distribution lists: technician/groups.md
+      - Licenses: technician/licenses.md
+      - MFA, TAP & sessions: technician/mfa.md
+      - Onboarding: technician/onboarding.md
+      - Offboarding & restore: technician/offboarding.md
+  - Admin Guides:
+      - Team & portal roles: admin/team-and-roles.md
+      - Role templates: admin/role-templates.md
+      - Approval rules: admin/approval-rules.md
+      - Conditional Access: admin/conditional-access.md
+      - AD agent (hybrid): admin/ad-agent.md
+      - Certificate rotation: admin/certificate-rotation.md
+      - Audit log & verification: admin/audit-log.md
+      - Health & monitoring: admin/health.md
+      - Backups & restore: admin/backups-and-restore.md
+      - Updating Rollcall: admin/updating.md
+      - Installer commands: admin/installer-commands.md
+  - Reference & Security:
+      - Required permissions: reference/permissions.md
+      - STRIDE threat model: security/threat-model.md
+      - Troubleshooting: troubleshooting.md
+      - Brand guide: brand-guide.md
+  - Architecture & Contributing:
+      - Local development: contributing/development.md
+      - Architecture: contributing/architecture.md
+      - Adding a workflow step: contributing/adding-a-workflow-step.md
+      - Release process: contributing/release-process.md
+      - v1.0.0 live walkthrough: release/v1.0.0-walkthrough.md
+      - ADRs: adr/README.md
