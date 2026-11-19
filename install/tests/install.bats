@@ -296,6 +296,17 @@ make_cert() {
   [[ "$output" == *"Couldn't read the certificate"* ]]
 }
 
+@test "an encrypted private key fails without prompting" {
+  load_installer
+  openssl req -x509 -newkey rsa:2048 -passout pass:secret -days 30 -subj "/CN=rc.test" \
+    -addext "subjectAltName=DNS:rc.test" -keyout "$TEST_DIR/enc.key" -out "$TEST_DIR/enc.pem" 2>/dev/null
+  OPT_TLS=custom OPT_HOSTNAME=rc.test OPT_CERT="$TEST_DIR/enc.pem" OPT_KEY="$TEST_DIR/enc.key"
+  run check_certificate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"The key doesn't match the certificate."* ]]
+  [[ "$output" == *"encrypted with a passphrase"* ]]
+}
+
 # --- Secrets and configuration -----------------------------------------------------------------
 
 @test "secrets are non-empty, distinct, and private" {
@@ -366,6 +377,45 @@ render_with() {
 
   render_with custom
   grep -q '^	tls /etc/rollcall/tls/cert.pem /etc/rollcall/tls/key.pem$' "$TEST_DIR/Caddyfile"
+}
+
+@test "copy_certificate keeps existing files when no paths are given or paths point in place" {
+  load_installer
+  INSTALL_DIR="$ROLLCALL_DIR"
+  mkdir -p "$ROLLCALL_DIR/tls"
+  echo "existing-cert" >"$ROLLCALL_DIR/tls/cert.pem"
+  echo "existing-key" >"$ROLLCALL_DIR/tls/key.pem"
+
+  OPT_TLS=custom OPT_CERT="" OPT_KEY=""
+  run copy_certificate
+  [ "$status" -eq 0 ]
+  [ "$(cat "$ROLLCALL_DIR/tls/cert.pem")" = existing-cert ]
+  [ "$(cat "$ROLLCALL_DIR/tls/key.pem")" = existing-key ]
+
+  OPT_TLS=custom OPT_CERT="$ROLLCALL_DIR/tls/cert.pem" OPT_KEY="$ROLLCALL_DIR/tls/key.pem"
+  run copy_certificate
+  [ "$status" -eq 0 ]
+  [ "$(cat "$ROLLCALL_DIR/tls/cert.pem")" = existing-cert ]
+}
+
+@test "release versions fetch installer files from GitHub release assets, not raw git tags" {
+  load_installer
+  ROLLCALL_VERSION="1.2.3"
+  [ "$(installer_file_url install.sh)" = "https://github.com/Salmonllama/Rollcall/releases/download/v1.2.3/install.sh" ]
+  [ "$(installer_file_url Caddyfile.tmpl)" = "https://github.com/Salmonllama/Rollcall/releases/download/v1.2.3/Caddyfile.tmpl" ]
+
+  ROLLCALL_VERSION="edge"
+  [ "$(installer_file_url install.sh)" = "https://raw.githubusercontent.com/Salmonllama/Rollcall/main/install/install.sh" ]
+}
+
+@test "readyz_json preserves the JSON body on HTTP 503" {
+  load_installer
+  compose() {
+    printf 'HTTP/1.0 503 Service Unavailable\r\nContent-Type: application/json\r\n\r\n{"db":"ok","migrations":"current","worker":"stale"}'
+  }
+  run readyz_json
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"db":"ok","migrations":"current","worker":"stale"}' ]
 }
 
 @test "the rendered Compose file publishes no database port" {

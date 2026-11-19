@@ -423,8 +423,16 @@ script_dir() {
   [[ -n "$source" && -f "$source" ]] && cd "$(dirname "$source")" && pwd
 }
 
-# Where the templates for this version live on GitHub when the installer was piped from curl.
-source_ref() { [[ "$ROLLCALL_VERSION" == edge ]] && echo "main" || echo "v$ROLLCALL_VERSION"; }
+# Where release files for this version live on GitHub when the installer was piped from curl.
+# Tagged releases publish the version-pinned install.sh and templates as release assets;
+# raw.githubusercontent.com at a tag still holds ROLLCALL_VERSION="edge".
+installer_file_url() {
+  if [[ "$ROLLCALL_VERSION" == edge ]]; then
+    printf 'https://raw.githubusercontent.com/%s/main/install/%s' "$REPO_SLUG" "$1"
+  else
+    printf 'https://github.com/%s/releases/download/v%s/%s' "$REPO_SLUG" "$ROLLCALL_VERSION" "$1"
+  fi
+}
 
 # fetch_installer_file <name> <destination> copies a file that ships next to install.sh, or
 # downloads it for this installer's version.
@@ -434,7 +442,7 @@ fetch_installer_file() {
   if [[ -n "$dir" && -f "$dir/$1" ]]; then
     cp "$dir/$1" "$2"
   else
-    logged curl -fsSL --retry 3 -o "$2" "https://raw.githubusercontent.com/$REPO_SLUG/$(source_ref)/install/$1"
+    logged curl -fsSL --retry 3 -o "$2" "$(installer_file_url "$1")"
   fi
 }
 
@@ -606,10 +614,10 @@ check_certificate() {
 
   openssl x509 -in "$OPT_CERT" -noout 2>/dev/null || fail "$OPT_CERT isn't a PEM certificate." \
     "the file is in DER or PFX format, or is the key." "convert it to PEM, for example: openssl x509 -inform der -in cert.cer -out cert.pem"
-  local cert_key key_key
-  cert_key="$(openssl x509 -in "$OPT_CERT" -noout -pubkey 2>/dev/null | openssl sha256)"
-  key_key="$(openssl pkey -in "$OPT_KEY" -pubout 2>/dev/null | openssl sha256)" || true
-  [[ -n "$key_key" && "$cert_key" == "$key_key" ]] || fail "The key doesn't match the certificate." \
+  local cert_pub key_pub
+  cert_pub="$(openssl x509 -in "$OPT_CERT" -noout -pubkey 2>/dev/null)" || true
+  key_pub="$(openssl pkey -in "$OPT_KEY" -pubout -passin pass: 2>/dev/null)" || true
+  [[ -n "$cert_pub" && -n "$key_pub" && "$cert_pub" == "$key_pub" ]] || fail "The key doesn't match the certificate." \
     "the key belongs to a different certificate, or is encrypted with a passphrase." \
     "rerun with the matching, unencrypted key file."
   if ! openssl x509 -in "$OPT_CERT" -noout -checkend 0 >/dev/null 2>&1; then
@@ -665,9 +673,9 @@ EOF
 copy_certificate() {
   mkdir -p "$INSTALL_DIR/tls"
   chmod 0700 "$INSTALL_DIR/tls"
-  [[ "$OPT_TLS" == custom ]] || return 0
-  install -m 0644 "$OPT_CERT" "$INSTALL_DIR/tls/cert.pem"
-  install -m 0600 "$OPT_KEY" "$INSTALL_DIR/tls/key.pem"
+  [[ "$OPT_TLS" == custom && -n "$OPT_CERT" && -n "$OPT_KEY" ]] || return 0
+  [[ "$OPT_CERT" -ef "$INSTALL_DIR/tls/cert.pem" ]] || install -m 0644 "$OPT_CERT" "$INSTALL_DIR/tls/cert.pem"
+  [[ "$OPT_KEY" -ef "$INSTALL_DIR/tls/key.pem" ]] || install -m 0600 "$OPT_KEY" "$INSTALL_DIR/tls/key.pem"
 }
 
 tls_directive() {
@@ -695,8 +703,11 @@ render_config() {
   tmp="$(mktemp -d)"
   local file
   for file in docker-compose.yml.tmpl Caddyfile.tmpl; do
-    fetch_installer_file "$file" "$tmp/$file" || fail "Couldn't download the configuration templates for $ROLLCALL_VERSION." \
-      "the host can't reach raw.githubusercontent.com." "$(log_hint)"
+    if ! fetch_installer_file "$file" "$tmp/$file"; then
+      rm -rf "$tmp"
+      fail "Couldn't download the configuration templates for $ROLLCALL_VERSION." \
+        "the host can't reach GitHub." "$(log_hint)"
+    fi
   done
   render_template "$tmp/docker-compose.yml.tmpl" "$INSTALL_DIR/docker-compose.yml"
   render_template "$tmp/Caddyfile.tmpl" "$INSTALL_DIR/Caddyfile"
@@ -709,7 +720,9 @@ render_config() {
   if [[ -n "$dir" && -f "$dir/install.sh" ]]; then
     [[ "$dir/install.sh" -ef "$INSTALL_DIR/install.sh" ]] || install -m 0755 "$dir/install.sh" "$INSTALL_DIR/install.sh"
   else
-    fetch_installer_file install.sh "$INSTALL_DIR/install.sh" && chmod 0755 "$INSTALL_DIR/install.sh"
+    fetch_installer_file install.sh "$INSTALL_DIR/install.sh" || fail "Couldn't download install.sh for $ROLLCALL_VERSION." \
+      "the host can't reach GitHub." "$(log_hint)"
+    chmod 0755 "$INSTALL_DIR/install.sh"
   fi
   logged compose config --quiet || fail "The rendered Compose file isn't valid." \
     "a template or .env value is malformed." "$(log_hint)"
@@ -732,9 +745,17 @@ start_stack() {
 }
 
 # readyz_json prints the app's /readyz body, fetched from inside the proxy container so it
-# works before DNS or the certificate is in place.
+# works before DNS or the certificate is in place. BusyBox wget discards the body on HTTP 503,
+# so prefer a plain HTTP/1.0 probe over nc to keep the diagnostic JSON when not ready.
 readyz_json() {
-  compose exec -T proxy wget -q -T 5 -O - http://app:8080/readyz 2>/dev/null
+  compose exec -T proxy sh -c '
+    if command -v nc >/dev/null 2>&1; then
+      printf "GET /readyz HTTP/1.0\r\nHost: app\r\n\r\n" | nc -w 5 app 8080
+    else
+      printf "\r\n"
+      wget -q -T 5 -O - http://app:8080/readyz
+    fi
+  ' 2>/dev/null | tr -d '\r' | sed '1,/^$/d'
 }
 
 wait_for_ready() {
